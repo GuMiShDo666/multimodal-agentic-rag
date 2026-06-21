@@ -1,9 +1,10 @@
 import json
 import re
 from langchain_core.messages import HumanMessage, AIMessageChunk, ToolMessage
+from core.execution_logger import log_chat_end, log_chat_start, log_error
 
-SILENT_NODES = {"rewrite_query"}
 SYSTEM_NODES = {"summarize_history", "rewrite_query"}
+FINAL_RESPONSE_NODES = {"aggregate_answers"}
 
 SYSTEM_NODE_CONFIG = {
     "rewrite_query":     {"title": "🔍 Query Analysis & Rewriting"},
@@ -117,6 +118,7 @@ class ChatInterface:
 
         config        = self.rag_system.get_config()
         current_state = self.rag_system.agent_graph.get_state(config)
+        log_chat_start(message.strip(), self.rag_system.thread_id, bool(current_state.next))
 
         try:
             if current_state.next:
@@ -141,12 +143,19 @@ class ChatInterface:
                 elif isinstance(chunk, ToolMessage):
                     self._handle_tool_result(chunk, response_messages, active_tool_calls)
 
-                elif isinstance(chunk, AIMessageChunk) and chunk.content and node not in SILENT_NODES:
+                elif isinstance(chunk, AIMessageChunk) and chunk.content and node in FINAL_RESPONSE_NODES:
                     self._handle_llm_token(chunk, node, response_messages)
+
+                else:
+                    continue
 
                 yield response_messages
 
+            final_state = self.rag_system.agent_graph.get_state(config)
+            log_chat_end(getattr(final_state, "values", final_state))
+
         except Exception as e:
+            log_error("chat", e)
             yield f"❌ Error: {str(e)}"
 
     def clear_session(self):

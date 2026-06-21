@@ -36,7 +36,7 @@ until curl -s http://localhost:11434 >/dev/null; do
   sleep 1
 done
 
-ollama pull qwen3:4b-instruct-2507-q4_K_M || true
+ollama pull granite4.1:8b || true
 
 cd project
 python app.py

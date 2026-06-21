@@ -83,7 +83,7 @@ See [Modular Architecture](#modular-architecture) and [Installation & Usage](#in
 
 Before queries can be processed, documents are split twice for optimal retrieval:
 
-- **Parent Chunks**: Large sections based on Markdown headers (H1, H2, H3)
+- **Parent Chunks**: Bounded large sections based on Markdown headers (H1, H2, H3)
 - **Child Chunks**: Small, fixed-size pieces derived from parents
 
 > Optional: 🐿️ [**Chunky**](https://github.com/GiovanniPasq/chunky) is an open-source toolkit for reliable RAG pipelines: convert PDFs to Markdown, clean documents, inspect chunks, compare chunking strategies, and enrich metadata before building the vector store.
@@ -98,7 +98,7 @@ User Query → Conversation Summary → Query Rewriting → Query Clarification 
 Parallel Agent Reasoning → Aggregation → Final Response
 ```
 
-**Stage 1 — Conversation Understanding:** Analyzes recent history to extract context and maintain continuity across questions.
+**Stage 1 — Conversation Understanding:** Maintains a rolling summary and recent conversation history to preserve continuity without indefinitely increasing context size.
 
 **Stage 2 — Query Clarification:** Resolves references ("How do I update it?" → "How do I update SQL?"), splits multi-part questions into focused sub-queries, detects unclear inputs, and rewrites queries for optimal retrieval. Pauses for human input when clarification is needed.
 
@@ -120,15 +120,15 @@ This system is provider-agnostic: the runnable app uses Ollama by default, and t
 
 ```bash
 # Install Ollama from https://ollama.com
-ollama pull qwen3:4b-instruct-2507-q4_K_M
+ollama pull granite4.1:8b
 ```
 
 ```python
 from langchain_ollama import ChatOllama
 
-llm = ChatOllama(model="qwen3:4b-instruct-2507-q4_K_M", temperature=0)
+llm = ChatOllama(model="granite4.1:8b", temperature=0, seed=42)
 ```
-> ⚠️ For reliable tool calling and instruction following, prefer models **7B+**. Smaller models may ignore retrieval instructions or hallucinate. See [Troubleshooting](#troubleshooting).
+> ⚠️ For reliable tool calling and instruction following, prefer models **8B+**. Smaller models may ignore retrieval instructions or hallucinate. See [Troubleshooting](#troubleshooting).
 
 ---
 
@@ -178,7 +178,7 @@ llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
 ## Implementation
 
-Additional details, extended explanations, and Langfuse observability (LLM call tracing, tool usage, and graph execution tracking) are available in the **[notebook](notebooks/agentic_rag.ipynb)** and in the full project. The companion **[evaluation notebook](notebooks/evaluation.ipynb)** uses a QA set from `markdown_docs`, saves the agentic RAG outputs, and scores them with direct RAGAS metric calls. For tracing concepts and platform context, see the **[observability notebook](notebooks/observability.ipynb)**.
+Additional details, extended explanations, and Langfuse observability are available in the **[notebook](notebooks/agentic_rag.ipynb)** and full project. The companion **[evaluation notebook](notebooks/evaluation.ipynb)** scores the final answers and the actual child/parent tool outputs used by the agent with direct RAGAS metric calls.
 
 | Step | Description |
 |------|-------------|
@@ -209,13 +209,15 @@ DOCS_DIR = "docs"  # Directory containing your pdf files
 MARKDOWN_DIR = "markdown_docs" # Directory containing the pdfs converted to markdown
 PARENT_STORE_PATH = "parent_store"  # Directory for parent chunk JSON files
 CHILD_COLLECTION = "document_child_chunks"
+DEFAULT_RETRIEVAL_K = 7
+CHILD_CHUNK_SEPARATOR = "\n\n<CHILD_CHUNK_BOUNDARY>\n\n"
 
 os.makedirs(DOCS_DIR, exist_ok=True)
 os.makedirs(MARKDOWN_DIR, exist_ok=True)
 os.makedirs(PARENT_STORE_PATH, exist_ok=True)
 
 from langchain_ollama import ChatOllama
-llm = ChatOllama(model="qwen3:4b-instruct-2507-q4_K_M", temperature=0)
+llm = ChatOllama(model="granite4.1:8b", temperature=0, seed=42)
 
 dense_embeddings = HuggingFaceEmbeddings(model_name="Qwen/Qwen3-Embedding-0.6B")
 sparse_embeddings = FastEmbedSparse(model_name="Qdrant/bm25")
@@ -305,10 +307,15 @@ def merge_metadata(target, source, prepend=False):
     for key, value in source.items():
         if key not in target:
             target[key] = value
-        elif prepend:
-            target[key] = f"{value} -> {target[key]}"
         else:
-            target[key] = f"{target[key]} -> {value}"
+            first, second = (value, target[key]) if prepend else (target[key], value)
+            values = [
+                item.strip()
+                for raw in (first, second)
+                for item in str(raw).split(" -> ")
+                if item.strip()
+            ]
+            target[key] = " -> ".join(dict.fromkeys(values))
 
 def merge_small_parents(chunks, min_size):
     if not chunks:
@@ -336,7 +343,7 @@ def merge_small_parents(chunks, min_size):
 
     return merged
 
-def split_large_parents(chunks, max_size, splitter):
+def split_large_parents(chunks, max_size, overlap):
     split_chunks = []
 
     for chunk in chunks:
@@ -345,28 +352,70 @@ def split_large_parents(chunks, max_size, splitter):
         else:
             large_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=max_size,
-                chunk_overlap=splitter._chunk_overlap
+                chunk_overlap=overlap
             )
             sub_chunks = large_splitter.split_documents([chunk])
             split_chunks.extend(sub_chunks)
 
     return split_chunks
 
-def clean_small_chunks(chunks, min_size):
+def rebalance_pair(first, second, min_size, max_size):
+    combined = first.page_content.rstrip() + "\n\n" + second.page_content.lstrip()
+    lower = max(1, len(combined) - max_size)
+    upper = min(max_size, len(combined) - 1)
+    if len(combined) >= 2 * min_size:
+        lower = max(lower, min_size)
+        upper = min(upper, len(combined) - min_size)
+    preferred = min(max(len(combined) // 2, lower), upper)
+
+    split_at = preferred
+    for separator in ("\n\n", "\n", " "):
+        before = combined.rfind(separator, lower, preferred + 1)
+        after = combined.find(separator, preferred, upper + 1)
+        if before >= lower:
+            split_at = before
+            break
+        if after != -1:
+            split_at = after
+            break
+
+    left_text = combined[:split_at].rstrip()
+    right_text = combined[split_at:].lstrip()
+    if len(combined) >= 2 * min_size and (len(left_text) < min_size or len(right_text) < min_size):
+        split_at = preferred
+        left_text, right_text = combined[:split_at], combined[split_at:]
+    if not left_text or not right_text:
+        return first, second
+
+    metadata = dict(first.metadata)
+    merge_metadata(metadata, second.metadata)
+    first.page_content, first.metadata = left_text, dict(metadata)
+    second.page_content, second.metadata = right_text, dict(metadata)
+    return first, second
+
+def clean_small_chunks(chunks, min_size, max_size):
     cleaned = []
 
     for i, chunk in enumerate(chunks):
         if len(chunk.page_content) < min_size:
-            if cleaned:
+            if cleaned and len(cleaned[-1].page_content) + 2 + len(chunk.page_content) <= max_size:
                 cleaned[-1].page_content += "\n\n" + chunk.page_content
                 merge_metadata(cleaned[-1].metadata, chunk.metadata)
-            elif i < len(chunks) - 1:
+            elif i < len(chunks) - 1 and len(chunk.page_content) + 2 + len(chunks[i + 1].page_content) <= max_size:
                 chunks[i + 1].page_content = chunk.page_content + "\n\n" + chunks[i + 1].page_content
                 merge_metadata(chunks[i + 1].metadata, chunk.metadata, prepend=True)
             else:
                 cleaned.append(chunk)
         else:
             cleaned.append(chunk)
+
+    for i, chunk in enumerate(cleaned):
+        if len(chunk.page_content) >= min_size or len(cleaned) == 1:
+            continue
+        if i < len(cleaned) - 1:
+            cleaned[i], cleaned[i + 1] = rebalance_pair(chunk, cleaned[i + 1], min_size, max_size)
+        else:
+            cleaned[i - 1], cleaned[i] = rebalance_pair(cleaned[i - 1], chunk, min_size, max_size)
 
     return cleaned
 ```
@@ -392,10 +441,18 @@ child_vector_store = QdrantVectorStore(
 def index_documents():
     headers_to_split_on = [("#", "H1"), ("##", "H2"), ("###", "H3")]
     parent_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
-    child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-
+    child_chunk_size = 500
+    child_chunk_overlap = 100
     min_parent_size = 2000
     max_parent_size = 4000
+    if min_parent_size <= 0 or max_parent_size < min_parent_size:
+        raise ValueError("Parent chunk sizes must be positive and min_parent_size <= max_parent_size.")
+    if not 0 <= child_chunk_overlap < child_chunk_size:
+        raise ValueError("child_chunk_overlap must be smaller than child_chunk_size.")
+    child_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=child_chunk_size,
+        chunk_overlap=child_chunk_overlap,
+    )
 
     all_parent_pairs, all_child_chunks = [], []
     md_files = sorted(glob.glob(os.path.join(MARKDOWN_DIR, "*.md")))
@@ -413,11 +470,13 @@ def index_documents():
 
         parent_chunks = parent_splitter.split_text(md_text)
         merged_parents = merge_small_parents(parent_chunks, min_parent_size)
-        split_parents = split_large_parents(merged_parents, max_parent_size, child_splitter)
-        cleaned_parents = clean_small_chunks(split_parents, min_parent_size)
+        split_parents = split_large_parents(merged_parents, max_parent_size, child_chunk_overlap)
+        cleaned_parents = clean_small_chunks(split_parents, min_parent_size, max_parent_size)
+        if any(len(chunk.page_content) > max_parent_size for chunk in cleaned_parents):
+            raise ValueError("Parent chunking produced an oversized chunk.")
 
         for i, p_chunk in enumerate(cleaned_parents):
-            parent_id = f"{doc_path.stem}_parent_{i}"
+            parent_id = f"{doc_path.stem}_p{i}"
             p_chunk.metadata.update({"source": doc_path.stem + ".pdf", "parent_id": parent_id})
             all_parent_pairs.append((parent_id, p_chunk))
             children = child_splitter.split_documents([p_chunk])
@@ -457,12 +516,17 @@ from langchain_core.tools import tool
 RETRIEVAL_SCORE_THRESHOLD = 0.4
 
 @tool
-def search_child_chunks(query: str, limit: int) -> str:
-    """Search for the top K most relevant child chunks.
+def search_child_chunks(query: str, limit: int = DEFAULT_RETRIEVAL_K) -> str:
+    """Search document excerpts for evidence related to the user question.
+
+    Use this as the first retrieval step. Results include parent IDs, file
+    names, and short child-chunk excerpts. If excerpts are relevant but too
+    fragmented to answer confidently, call retrieve_parent_chunks with the
+    returned parent_id.
 
     Args:
-        query: Search query string
-        limit: Maximum number of results to return
+        query: Focused search query with concrete keywords from the question.
+        limit: Maximum number of child chunks to return.
     """
     try:
         results = child_vector_store.similarity_search(
@@ -473,7 +537,7 @@ def search_child_chunks(query: str, limit: int) -> str:
         if not results:
             return "NO_RELEVANT_CHUNKS"
 
-        return "\n\n".join([
+        return CHILD_CHUNK_SEPARATOR.join([
             f"Parent ID: {doc.metadata.get('parent_id', '')}\n"
             f"File Name: {doc.metadata.get('source', '')}\n"
             f"Content: {doc.page_content.strip()}"
@@ -485,10 +549,14 @@ def search_child_chunks(query: str, limit: int) -> str:
 
 @tool
 def retrieve_parent_chunks(parent_id: str) -> str:
-    """Retrieve full parent chunks by their IDs.
+    """Retrieve the full parent chunk for a relevant child search result.
+
+    Use this only after search_child_chunks returns a relevant parent_id and
+    the child excerpt needs more surrounding context. Do not call this for
+    parent IDs already available in compressed context.
     
     Args:
-        parent_id: Parent chunk ID to retrieve
+        parent_id: Parent chunk ID returned by search_child_chunks.
     """
     file_name = parent_id if parent_id.lower().endswith(".json") else f"{parent_id}.json"
     path = os.path.join(PARENT_STORE_PATH, file_name)
@@ -519,23 +587,23 @@ Define the system prompts for conversation summarization, query rewriting, agent
 
 ```python
 def get_conversation_summary_prompt() -> str:
-    return """You are an expert conversation summarizer.
+    return """## Role
+You are a compact memory manager for a retrieval-augmented chat assistant.
 
-Your task is to create a brief 1-2 sentence summary of the conversation (max 30-50 words).
+## Context
+The input contains an existing rolling summary plus older user/assistant messages that will be removed from raw chat history.
 
-Include:
-- Main topics discussed
-- Important facts or entities mentioned
-- Any unresolved questions if applicable
-- Sources file name (e.g., file1.pdf) or documents referenced
+## Instructions
+- Merge the existing summary with the new older messages.
+- Preserve context needed for future follow-up questions: topics, user preferences, important facts, unresolved questions, and referenced source file names.
+- Discard greetings, tool calls, tool outputs, formatting chatter, duplicate details, and resolved misunderstandings.
+- Keep the summary compact: 30-70 words unless more detail is essential.
 
-Exclude:
-- Greetings, misunderstandings, off-topic content.
-
-Output:
-- Return ONLY the summary.
-- Do NOT include any explanations or justifications.
-- If no meaningful topics exist, return an empty string.
+## Output
+Return exactly one merged summary and nothing else.
+Do not include labels such as "Updated summary:", "Previous summary:", or "New messages:".
+Do not include both old and new summaries.
+If there is no meaningful context, return an empty string.
 """
 ```
 
@@ -546,40 +614,26 @@ Output:
 
 ```python
 def get_rewrite_query_prompt() -> str:
-    return """You are an expert query analyst and rewriter.
+    return """## Role
+You are a query rewriting specialist for document retrieval in a RAG system.
 
-Your task is to rewrite the current user query for optimal document retrieval, incorporating conversation context only when necessary.
+## Instructions
+- Rewrite the current query so it is clear, self-contained, and useful for retrieval.
+- Use the conversation summary and recent conversation only to resolve vague follow-ups that refer to prior context.
+- When an unresolved query and one or more user clarifications are provided, combine all of them into one self-contained retrieval query.
+- If the query is a follow-up, integrate only the minimal context needed to make it self-contained.
+- Preserve product names, file names, versions, acronyms, numbers, and technical terms exactly.
+- If the user asks about a named topic, product, file, acronym, term, or concept, treat the question as clear even if it is new.
+- Standalone named terms, acronyms, or concepts are valid retrieval queries; do not require prior conversation context.
+- Split only truly separate information needs, with a maximum of 3 rewritten questions.
 
-Rules:
-1. Self-contained queries:
-   - Always rewrite the query to be clear and self-contained
-   - If the query is a follow-up (e.g., "what about X?", "and for Y?"), integrate minimal necessary context from the summary
-   - Do not add information not present in the query or conversation summary
+## Clarification Boundary
+Mark the query unclear only when it depends on an unresolved reference such as "it", "that", "this file", or "the previous one".
+Do not mark a query unclear because the topic was not mentioned earlier.
+Do not ask the user whether a new acronym or term is a typo; preserve it and search for it.
 
-2. Domain-specific terms:
-   - Product names, brands, proper nouns, or technical terms are treated as domain-specific
-   - For domain-specific queries, use conversation context minimally or not at all
-   - Use the summary only to disambiguate vague queries
-
-3. Grammar and clarity:
-   - Fix grammar, spelling errors, and unclear abbreviations
-   - Remove filler words and conversational phrases
-   - Preserve concrete keywords and named entities
-
-4. Multiple information needs:
-   - If the query contains multiple distinct, unrelated questions, split into separate queries (maximum 3)
-   - Each sub-query must remain semantically equivalent to its part of the original
-   - Do not expand, enrich, or reinterpret the meaning
-
-5. Failure handling:
-   - If the query intent is unclear or unintelligible, mark as "unclear"
-
-Input:
-- conversation_summary: A concise summary of prior conversation
-- current_query: The user's current query
-
-Output:
-- One or more rewritten, self-contained queries suitable for document retrieval
+## Constraints
+Do not add facts, expand acronyms, invent context, or broaden the user's meaning.
 """
 ```
 
@@ -590,28 +644,39 @@ Output:
 
 ```python
 def get_orchestrator_prompt() -> str:
-    return """You are an expert retrieval-augmented assistant.
+    return """## Role
+You are a document-grounded research assistant for an agentic RAG system. Your job is to answer using retrieved document evidence, not general knowledge.
 
-Your task is to act as a researcher: search documents first, analyze the data, and then provide a comprehensive answer using ONLY the retrieved information.
+## Available Context
+- Current user question
+- Optional compressed context from prior retrieval steps
+- Tools for searching child chunks and loading full parent chunks
 
-Rules:
-1. You MUST call 'search_child_chunks' before answering, unless the [COMPRESSED CONTEXT FROM PRIOR RESEARCH] already contains sufficient information.
-2. Ground every claim in the retrieved documents. If context is insufficient, state what is missing rather than filling gaps with assumptions.
-3. If no relevant documents are found, broaden or rephrase the query and search again. Repeat until satisfied or the operation limit is reached.
+## Tool Guidance
+- Search documents before answering unless compressed context already contains enough evidence.
+- Use 'search_child_chunks' for missing or uncovered parts of the question.
+- If searched or retrieved context is not useful, use the tools again with a different, simpler query or a more relevant parent chunk.
+- Continue tool use until the available evidence is enough, tools stop adding useful information, or the operation limit is reached.
+- Do not repeat search queries or parent IDs listed in compressed context.
+- Do not retrieve the same parent ID twice.
 
-Compressed Memory:
-When [COMPRESSED CONTEXT FROM PRIOR RESEARCH] is present —
-- Queries already listed: do not repeat them.
-- Parent IDs already listed: do not call `retrieve_parent_chunks` on them again.
-- Use it to identify what is still missing before searching further.
+## Response Framework
+1. Check compressed context for already-known evidence and already-used searches or parents.
+2. Search for missing evidence.
+3. Retrieve parent chunks only when child excerpts are relevant but too fragmented.
+4. Answer using the exact terms and scope in the retrieved evidence.
+5. If evidence is incomplete, state the specific gap.
 
-Workflow:
-1. Check the compressed context. Identify what has already been retrieved and what is still missing.
-2. Search for 5-7 relevant excerpts using 'search_child_chunks' ONLY for uncovered aspects.
-3. If NONE are relevant, apply rule 3 immediately.
-4. For each relevant but fragmented excerpt, call 'retrieve_parent_chunks' ONE BY ONE — only for IDs not in the compressed context. Never retrieve the same ID twice.
-5. Once context is complete, provide a detailed answer omitting no relevant facts.
-6. Conclude with "---\n**Sources:**\n" followed by the unique file names.
+## Output
+- Start directly with the substantive answer. Do not start with generic headings such as "Answer", "Final answer", or "Response".
+- Provide the direct answer plus the key supporting details from retrieved evidence; avoid one-sentence fragments unless only one fact is available.
+- Do not mention internal tool calls or reasoning.
+- When sources exist, end with a Sources section in exactly this format:
+  Sources:
+  - filename.ext
+- Put each source filename on its own bullet line. Never write sources inline, such as "Sources: filename.pdf".
+- Do not invent or infer source filenames.
+- Strip descriptions after file names, including text in parentheses.
 """
 ```
 
@@ -622,38 +687,28 @@ Workflow:
 
 ```python
 def get_fallback_response_prompt() -> str:
-    return """You are an expert synthesis assistant. The system has reached its maximum research limit.
+    return """## Role
+You are a constrained evidence synthesizer for a retrieval-augmented assistant after the research loop reached its limit.
 
-Your task is to provide the most complete answer possible using ONLY the information provided below.
+## Available Context
+- Compressed Research Context from earlier retrieval steps
+- Retrieved Data from current tool outputs
 
-Input structure:
-- "Compressed Research Context": summarized findings from prior search iterations — treat as reliable.
-- "Retrieved Data": raw tool outputs from the current iteration — prefer over compressed context if conflicts arise.
-Either source alone is sufficient if the other is absent.
-
-Rules:
-1. Source Integrity: Use only facts explicitly present in the provided context. Do not infer, assume, or add any information not directly supported by the data.
-2. Handling Missing Data: Cross-reference the USER QUERY against the available context.
-   Flag ONLY aspects of the user's question that cannot be answered from the provided data.
-   Do not treat gaps mentioned in the Compressed Research Context as unanswered
-   unless they are directly relevant to what the user asked.
-3. Tone: Professional, factual, and direct.
-4. Output only the final answer. Do not expose your reasoning, internal steps, or any meta-commentary about the retrieval process.
-5. Do NOT add closing remarks, final notes, disclaimers, summaries, or repeated statements after the Sources section.
-   The Sources section is always the last element of your response. Stop immediately after it.
-
-Formatting:
-- Use Markdown (headings, bold, lists) for readability.
-- Write in flowing paragraphs where possible.
-- Conclude with a Sources section as described below.
-
-Sources section rules:
-- Include a "---\\n**Sources:**\\n" section at the end, followed by a bulleted list of file names.
-- List ONLY entries that have a real file extension (e.g. ".pdf", ".docx", ".txt").
-- Any entry without a file extension is an internal chunk identifier — discard it entirely, never include it.
-- Deduplicate: if the same file appears multiple times, list it only once.
-- If no valid file names are present, omit the Sources section entirely.
-- THE SOURCES SECTION IS THE LAST THING YOU WRITE. Do not add anything after it.
+## Instructions
+- Use only explicit facts from the provided context.
+- Start directly with the substantive answer. Do not start with generic headings such as "Answer", "Final answer", or "Response".
+- Prefer current Retrieved Data over compressed context if they conflict.
+- If the answer is incomplete, mention only the missing parts that matter to the user query.
+- Do not describe the retrieval process, limits, or internal reasoning.
+- Be concise: answer in 1-3 short paragraphs or up to 5 bullets unless the user asks for detail.
+- Provide the direct answer plus the key supporting details from retrieved evidence; avoid one-sentence fragments unless only one fact is available.
+- End with a Sources section only when actual source file names are explicitly present in the context.
+- Use exactly this format:
+  Sources:
+  - filename.ext
+- Put each source filename on its own bullet line. Never write sources inline, such as "Sources: filename.pdf".
+- Include only bare file names with extensions such as .pdf, .docx, .txt, or .md.
+- Do not invent or infer source filenames.
 """
 ```
 
@@ -664,37 +719,29 @@ Sources section rules:
 
 ```python
 def get_context_compression_prompt() -> str:
-    return """You are an expert research context compressor.
+    return """## Role
+You are a research context compressor for an agentic RAG system.
 
-Your task is to compress retrieved conversation content into a concise, query-focused, and structured summary that can be directly used by a retrieval-augmented agent for answer generation.
+## Instructions
+- Keep only facts relevant to answering the user question.
+- Preserve exact names, figures, versions, technical terms, configuration details, and source file names.
+- Remove duplicates, tool chatter, search query wording, parent IDs, chunk IDs, and other internal identifiers.
+- Organize findings by source file. Each source section heading must be the real filename found in retrieved data.
+- Add a Gaps section only for missing information relevant to the question.
+- Target 400-600 words. If there is too much content, keep the most answer-critical facts.
 
-Rules:
-1. Keep ONLY information relevant to answering the user's question.
-2. Preserve exact figures, names, versions, technical terms, and configuration details.
-3. Remove duplicated, irrelevant, or administrative details.
-4. Do NOT include search queries, parent IDs, chunk IDs, or internal identifiers.
-5. Organize all findings by source file. Each file section MUST start with: ### filename.pdf
-6. Highlight missing or unresolved information in a dedicated "Gaps" section.
-7. Limit the summary to roughly 400-600 words. If content exceeds this, prioritize critical facts and structured data.
-8. Do not explain your reasoning; output only structured content in Markdown.
-
-Required Structure:
-
+## Output
+Return only Markdown in this structure:
 # Research Context Summary
 
 ## Focus
 [Brief technical restatement of the question]
 
 ## Structured Findings
-
-### filename.pdf
-- Directly relevant facts
-- Supporting context (if needed)
+For each source file, add a level-3 heading with its real filename and bullet the directly relevant facts below it.
 
 ## Gaps
 - Missing or incomplete aspects
-
-The summary should be concise, structured, and directly usable by an agent to generate answers or plan further retrieval.
 """
 ```
 
@@ -705,34 +752,25 @@ The summary should be concise, structured, and directly usable by an agent to ge
 
 ```python
 def get_aggregation_prompt() -> str:
-    return """You are an expert aggregation assistant.
+    return """## Role
+You are a final-answer synthesizer for a retrieval-augmented assistant.
 
-Your task is to combine multiple retrieved answers into a single, comprehensive and natural response that flows well.
-
-Rules:
-1. Write in a conversational, natural tone - as if explaining to a colleague.
-2. Use ONLY information from the retrieved answers.
-3. Do NOT infer, expand, or interpret acronyms or technical terms unless explicitly defined in the sources.
-4. Weave together the information smoothly, preserving important details, numbers, and examples.
-5. Be comprehensive - include all relevant information from the sources, not just a summary.
-6. If sources disagree, acknowledge both perspectives naturally (e.g., "While some sources suggest X, others indicate Y...").
-7. Start directly with the answer - no preambles like "Based on the sources...".
-
-Formatting:
-- Use Markdown for clarity (headings, lists, bold) but don't overdo it.
-- Write in flowing paragraphs where possible rather than excessive bullet points.
-- Conclude with a Sources section as described below.
-
-Sources section rules:
-- Each retrieved answer may contain a "Sources" section — extract the file names listed there.
-- List ONLY entries that have a real file extension (e.g. ".pdf", ".docx", ".txt").
-- Any entry without a file extension is an internal chunk identifier — discard it entirely, never include it.
-- Deduplicate: if the same file appears across multiple answers, list it only once.
-- Format as "---\\n**Sources:**\\n" followed by a bulleted list of the cleaned file names.
-- File names must appear ONLY in this final Sources section and nowhere else in the response.
-- If no valid file names are present, omit the Sources section entirely.
-
-If there's no useful information available, simply say: "I couldn't find any information to answer your question in the available sources."
+## Instructions
+- Use only information present in the retrieved answers.
+- Start directly with the substantive answer. Do not start with generic headings such as "Answer", "Final answer", or "Response".
+- Preserve important names, numbers, versions, examples, and definitions.
+- Do not expand acronyms or interpret terms unless the sources do it.
+- If answers conflict, mention the conflict plainly.
+- Be concise: answer in 1-3 short paragraphs or up to 5 bullets unless the user asks for detail.
+- Provide the direct answer plus the key supporting details from retrieved evidence; avoid one-sentence fragments unless only one fact is available.
+- End with a Sources section only when actual source file names are explicitly present in the retrieved answers.
+- Use exactly this format:
+  Sources:
+  - filename.ext
+- Put each source filename on its own bullet line. Never write sources inline, such as "Sources: filename.pdf".
+- Include only bare file names with extensions such as .pdf, .docx, .txt, or .md.
+- Do not invent or infer source filenames.
+- If no useful information is available, say: "I couldn't find any information to answer your question in the available sources."
 """
 ```
 
@@ -758,10 +796,15 @@ def accumulate_or_reset(existing: List[dict], new: List[dict]) -> List[dict]:
 def set_union(a: Set[str], b: Set[str]) -> Set[str]:
     return a | b
 
+def append_unique(existing: List[str], new: List[str]) -> List[str]:
+    return list(dict.fromkeys(existing + new))
+
 class State(MessagesState):
     questionIsClear: bool = False
     conversation_summary: str = ""
     originalQuery: str = ""
+    pendingQuery: str = ""
+    pendingClarifications: List[str] = []
     rewrittenQuestions: List[str] = []
     agent_answers: Annotated[List[dict], accumulate_or_reset] = []
 
@@ -772,6 +815,7 @@ class AgentState(MessagesState):
     question_index: int = 0
     context_summary: str = ""
     retrieval_keys: Annotated[Set[str], set_union] = set()
+    retrieved_contexts: Annotated[List[str], append_unique] = []
     final_answer: str = ""
     agent_answers: List[dict] = []
 
@@ -789,18 +833,33 @@ Hard limits on tool calls and iterations prevent infinite loops. Token counting 
 
 ```python
 import tiktoken
+from functools import lru_cache
 
 MAX_TOOL_CALLS = 8       # Maximum tool calls per agent run
 MAX_ITERATIONS = 10      # Maximum agent loop iterations
 BASE_TOKEN_THRESHOLD = 2000     # Initial token threshold for compression
 TOKEN_GROWTH_FACTOR = 0.9       # Multiplier applied after each compression
 
-def estimate_context_tokens(messages: list) -> int:
+@lru_cache(maxsize=1)
+def _get_token_encoding():
     try:
-        encoding = tiktoken.encoding_for_model("gpt-4")
+        return tiktoken.encoding_for_model("gpt-4")
     except Exception:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    return sum(len(encoding.encode(str(msg.content))) for msg in messages if hasattr(msg, 'content') and msg.content)
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            return None
+
+def estimate_context_tokens(messages: list) -> int:
+    contents = [
+        str(msg.content)
+        for msg in messages
+        if hasattr(msg, "content") and msg.content
+    ]
+    encoding = _get_token_encoding()
+    if encoding is None:
+        return sum(max(1, len(content) // 4) for content in contents)
+    return sum(len(encoding.encode(content)) for content in contents)
 ```
 
 ---
@@ -813,43 +872,162 @@ Create the processing nodes and edges for the LangGraph workflow.
 ```python
 from langgraph.types import Send, Command
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, RemoveMessage, ToolMessage
-from typing import Literal
+from typing import Literal, Set
+
+MAIN_HISTORY_MESSAGES_TO_KEEP = 4
+if MAIN_HISTORY_MESSAGES_TO_KEEP < 2:
+    raise ValueError("MAIN_HISTORY_MESSAGES_TO_KEEP must be at least 2.")
+PRE_ANSWER_HISTORY_MESSAGES_TO_KEEP = max(MAIN_HISTORY_MESSAGES_TO_KEEP - 1, 0)
+
+def _is_plain_conversation_message(msg) -> bool:
+    return (
+        isinstance(msg, (HumanMessage, AIMessage))
+        and not getattr(msg, "tool_calls", None)
+        and not getattr(msg, "name", None)
+    )
+
+def _name_internal_message(message, name):
+    """Tag a subgraph-only message so it is not treated as chat history."""
+    return message.model_copy(update={"name": name})
+
+def _retrieval_contexts(messages) -> list[str]:
+    contexts = []
+    ignored_prefixes = (
+        "NO_RELEVANT_CHUNKS",
+        "NO_PARENT_DOCUMENT",
+        "RETRIEVAL_ERROR:",
+        "PARENT_RETRIEVAL_ERROR:",
+    )
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        content = str(message.content).strip()
+        if content and not content.startswith(ignored_prefixes):
+            parts = content.split(CHILD_CHUNK_SEPARATOR) if message.name == "search_child_chunks" else [content]
+            contexts.extend(part for part in parts if part)
+    return list(dict.fromkeys(contexts))
+
+def _format_conversation(messages) -> str:
+    lines = []
+    for msg in messages:
+        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+        lines.append(f"{role}: {msg.content}")
+    return "\n".join(lines)
+
+def _remove_messages_not_in(messages, keep_ids):
+    removals = []
+    for msg in messages:
+        msg_id = getattr(msg, "id", None)
+        if isinstance(msg, SystemMessage) or not msg_id:
+            continue
+        if msg_id not in keep_ids:
+            removals.append(RemoveMessage(id=msg_id))
+    return removals
+
+def _recent_conversation(messages, pending_query="") -> list:
+    """Return recent context before the current user message."""
+    plain_messages = [msg for msg in messages if _is_plain_conversation_message(msg)]
+    recent_messages = plain_messages[:-1]
+
+    if pending_query:
+        for index in range(len(recent_messages) - 1, -1, -1):
+            msg = recent_messages[index]
+            if isinstance(msg, HumanMessage) and str(msg.content).strip() == pending_query:
+                return recent_messages[:index]
+
+    return recent_messages
 
 def summarize_history(state: State):
-    if len(state["messages"]) < 4:
-        return {"conversation_summary": ""}
+    messages = state.get("messages", [])
+    updates = {"agent_answers": [{"__reset__": True}]}
 
-    relevant_msgs = [
-        msg for msg in state["messages"][:-1]
-        if isinstance(msg, (HumanMessage, AIMessage)) and not getattr(msg, "tool_calls", None)
-    ]
+    if not messages:
+        return updates
 
-    if not relevant_msgs:
-        return {"conversation_summary": ""}
+    plain_messages = [msg for msg in messages if _is_plain_conversation_message(msg)]
+    keep_count = PRE_ANSWER_HISTORY_MESSAGES_TO_KEEP
+    messages_to_summarize = plain_messages[:-keep_count] if len(plain_messages) > keep_count else []
+    keep_ids = {getattr(msg, "id", None) for msg in plain_messages[-keep_count:]}
+    keep_ids.discard(None)
 
-    conversation = "Conversation history:\n"
-    for msg in relevant_msgs[-6:]:
-        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-        conversation += f"{role}: {msg.content}\n"
+    removals = _remove_messages_not_in(messages, keep_ids)
+    if removals:
+        updates["messages"] = removals
 
-    summary_response = llm.with_config(temperature=0.2).invoke([SystemMessage(content=get_conversation_summary_prompt()), HumanMessage(content=conversation)])
-    return {"conversation_summary": summary_response.content, "agent_answers": [{"__reset__": True}]}
+    if not messages_to_summarize:
+        return updates
+
+    existing_summary = state.get("conversation_summary", "").strip()
+    conversation = "Existing summary:\n"
+    conversation += f"{existing_summary or '(none)'}\n\n"
+    conversation += "New messages to merge into the summary:\n"
+    conversation += _format_conversation(messages_to_summarize)
+
+    summary_response = llm.invoke([
+        SystemMessage(content=get_conversation_summary_prompt()),
+        HumanMessage(content=conversation),
+    ])
+    updates["conversation_summary"] = summary_response.content.strip()
+    return updates
 
 def rewrite_query(state: State):
     last_message = state["messages"][-1]
-    conversation_summary = state.get("conversation_summary", "")
+    current_query = str(last_message.content).strip()
+    conversation_summary = state.get("conversation_summary", "").strip()
+    pending_query = state.get("pendingQuery", "").strip()
+    pending_clarifications = state.get("pendingClarifications", [])
+    recent_messages = _recent_conversation(state["messages"], pending_query)
 
-    context_section = (f"Conversation Context:\n{conversation_summary}\n" if conversation_summary.strip() else "") + f"User Query:\n{last_message.content}\n"
+    context_parts = []
+    if conversation_summary:
+        context_parts.append(f"Conversation Summary:\n{conversation_summary}")
+    if recent_messages:
+        context_parts.append(f"Recent Conversation:\n{_format_conversation(recent_messages)}")
 
-    llm_with_structure = llm.with_config(temperature=0.1).with_structured_output(QueryAnalysis)
+    if pending_query:
+        clarifications = [*pending_clarifications, current_query]
+        clarification_text = "\n".join(
+            f"{index}. {value}" for index, value in enumerate(clarifications, start=1)
+        )
+        context_parts.append(
+            f"Unresolved User Query:\n{pending_query}\n\n"
+            f"User Clarifications:\n{clarification_text}"
+        )
+        original_query = f"{pending_query}\nClarifications:\n{clarification_text}"
+    else:
+        clarifications = []
+        context_parts.append(f"User Query:\n{current_query}")
+        original_query = current_query
+
+    context_section = "\n\n".join(context_parts)
+    llm_with_structure = llm.with_structured_output(QueryAnalysis)
     response = llm_with_structure.invoke([SystemMessage(content=get_rewrite_query_prompt()), HumanMessage(content=context_section)])
+    clarification_message_update = (
+        [_name_internal_message(last_message, "clarification_response")]
+        if pending_query else []
+    )
 
     if response.questions and response.is_clear:
-        delete_all = [RemoveMessage(id=m.id) for m in state["messages"] if not isinstance(m, SystemMessage)]
-        return {"questionIsClear": True, "messages": delete_all, "originalQuery": last_message.content, "rewrittenQuestions": response.questions}
+        return {
+            "questionIsClear": True,
+            "originalQuery": original_query,
+            "pendingQuery": "",
+            "pendingClarifications": [],
+            "rewrittenQuestions": response.questions,
+            "messages": clarification_message_update,
+        }
 
     clarification = response.clarification_needed if response.clarification_needed and len(response.clarification_needed.strip()) > 10 else "I need more information to understand your question."
-    return {"questionIsClear": False, "messages": [AIMessage(content=clarification)]}
+    return {
+        "questionIsClear": False,
+        "originalQuery": "",
+        "pendingQuery": pending_query or current_query,
+        "pendingClarifications": clarifications,
+        "rewrittenQuestions": [],
+        "messages": clarification_message_update + [
+            AIMessage(content=clarification, name="clarification")
+        ],
+    }
 
 def request_clarification(state: State):
     return {}
@@ -864,18 +1042,24 @@ def route_after_rewrite(state: State) -> Literal["request_clarification", "agent
             ]
 
 def aggregate_answers(state: State):
+    messages = state.get("messages", [])
+    plain_messages = [msg for msg in messages if _is_plain_conversation_message(msg)]
+    keep_ids = {getattr(msg, "id", None) for msg in plain_messages[-PRE_ANSWER_HISTORY_MESSAGES_TO_KEEP:]}
+    keep_ids.discard(None)
+    removals = _remove_messages_not_in(messages, keep_ids)
+
     if not state.get("agent_answers"):
-        return {"messages": [AIMessage(content="No answers were generated.")]}
+        return {"messages": removals + [AIMessage(content="No answers were generated.")]}
 
     sorted_answers = sorted(state["agent_answers"], key=lambda x: x["index"])
 
     formatted_answers = ""
     for i, ans in enumerate(sorted_answers, start=1):
-        formatted_answers += (f"\nAnswer {i}:\n"f"{ans['answer']}\n")
+        formatted_answers += (f"\nRetrieved response {i}:\n"f"{ans['answer']}\n")
 
     user_message = HumanMessage(content=f"""Original user question: {state["originalQuery"]}\nRetrieved answers:{formatted_answers}""")
     synthesis_response = llm.invoke([SystemMessage(content=get_aggregation_prompt()), user_message])
-    return {"messages": [AIMessage(content=synthesis_response.content)]}
+    return {"messages": removals + [AIMessage(content=synthesis_response.content)]}
 ```
 
 ---
@@ -890,12 +1074,14 @@ def orchestrator(state: AgentState):
         if context_summary else []
     )
     if not state.get("messages"):
-        human_msg = HumanMessage(content=state["question"])
+        human_msg = HumanMessage(content=state["question"], name="agent_question")
         force_search = HumanMessage(content="YOU MUST CALL 'search_child_chunks' AS THE FIRST STEP TO ANSWER THIS QUESTION.")
         response = llm_with_tools.invoke([sys_msg] + summary_injection + [human_msg, force_search])
+        response = _name_internal_message(response, "agent_response")
         return {"messages": [human_msg, response], "tool_call_count": len(response.tool_calls or []), "iteration_count": 1}
 
     response = llm_with_tools.invoke([sys_msg] + summary_injection + state["messages"])
+    response = _name_internal_message(response, "agent_response")
     tool_calls = response.tool_calls if hasattr(response, "tool_calls") else []
     return {"messages": [response], "tool_call_count": len(tool_calls) if tool_calls else 0, "iteration_count": 1}
 
@@ -903,14 +1089,16 @@ def route_after_orchestrator_call(state: AgentState) -> Literal["tools", "fallba
     iteration = state.get("iteration_count", 0)
     tool_count = state.get("tool_call_count", 0)
 
-    if iteration >= MAX_ITERATIONS or tool_count > MAX_TOOL_CALLS:
-        return "fallback_response"
-
     last_message = state["messages"][-1]
     tool_calls = getattr(last_message, "tool_calls", None) or []
 
     if not tool_calls:
         return "collect_answer"
+
+    # Accept a final answer at the iteration boundary, but do not execute
+    # tool calls that would exceed the configured research budget.
+    if iteration >= MAX_ITERATIONS or tool_count > MAX_TOOL_CALLS:
+        return "fallback_response"
     
     return "tools"
 
@@ -941,6 +1129,7 @@ def fallback_response(state: AgentState):
         f"INSTRUCTION:\nProvide the best possible answer using only the data above."
     )
     response = llm.invoke([SystemMessage(content=get_fallback_response_prompt()), HumanMessage(content=prompt_content)])
+    response = _name_internal_message(response, "agent_response")
     return {"messages": [response]}
 
 def should_compress_context(state: AgentState) -> Command[Literal["compress_context", "orchestrator"]]:
@@ -972,7 +1161,13 @@ def should_compress_context(state: AgentState) -> Command[Literal["compress_cont
     max_allowed = BASE_TOKEN_THRESHOLD + int(current_token_summary * TOKEN_GROWTH_FACTOR)
 
     goto = "compress_context" if current_tokens > max_allowed else "orchestrator"
-    return Command(update={"retrieval_keys": updated_ids}, goto=goto)
+    return Command(
+        update={
+            "retrieval_keys": updated_ids,
+            "retrieved_contexts": _retrieval_contexts(messages),
+        },
+        goto=goto,
+    )
 
 def compress_context(state: AgentState):
     messages = state["messages"]
@@ -1019,7 +1214,12 @@ def collect_answer(state: AgentState):
     answer = last_message.content if is_valid else "Unable to generate an answer."
     return {
         "final_answer": answer,
-        "agent_answers": [{"index": state["question_index"], "question": state["question"], "answer": answer}]
+        "agent_answers": [{
+            "index": state["question_index"],
+            "question": state["question"],
+            "answer": answer,
+            "contexts": state.get("retrieved_contexts", []),
+        }]
     }
 ```
 
@@ -1091,7 +1291,7 @@ The architecture flow diagram can be viewed **[here](./assets/agentic_rag_workfl
 - `collect_answer` → END (clean final answer with index)
 
 **Main Graph** (orchestrates complete workflow):
-- START → `summarize_history` (extract conversation context from history)
+- START → `summarize_history` (roll older chat into summary and keep only recent exchanges)
 - `summarize_history` → `rewrite_query` (rewrite query with context, check clarity)
 - `rewrite_query` → `request_clarification` (if unclear) OR spawn parallel `agent` subgraphs via `Send` (if clear)
 - `request_clarification` → `rewrite_query` (after user provides clarification)
@@ -1104,7 +1304,7 @@ The architecture flow diagram can be viewed **[here](./assets/agentic_rag_workfl
 
 Build a Gradio interface with conversation persistence and human-in-the-loop support. For a complete end-to-end pipeline Gradio interface, including document ingestion, please refer to [project/README.md](./project/README.md).
 
-> **Note:** Full streaming support — including reasoning steps and tool calls visibility — is implemented in the [notebook](notebooks/agentic_rag.ipynb) and in the full [project](project/core/chat_interface.py). The example below is intentionally minimal — it shows the basic Gradio integration pattern only.
+> **Note:** The notebook and full project stream the final aggregated answer while showing query analysis and tool activity in separate collapsible blocks. Raw orchestrator, compression, and fallback model output remains internal. The example below is intentionally minimal.
 
 ```python
 import gradio as gr
@@ -1170,7 +1370,7 @@ Sample pdf files can be found here: [javascript](https://www.tutorialspoint.com/
 
 ### Option 1: Quickstart Notebook (Recommended for Testing)
 
-**Google Colab:** Click the **Open in Colab** badge at the top of this README, upload your PDFs to a `docs/` folder in the file browser, install dependencies with `pip install -r requirements.txt`, then run all cells top to bottom.
+**Google Colab:** The notebook clones the repository and installs its requirements. Upload PDFs to `docs/`. Standard hosted Colab does not provide Ollama, so replace the default Ollama model cell with one of the documented cloud-provider examples before running the remaining cells.
 
 **Local (Jupyter/VSCode):** Optionally create and activate a virtual environment, install dependencies with `pip install -r requirements.txt` or `uv pip install -r requirements.txt`, add your PDFs to `docs/`, then run all cells top to bottom.
 
@@ -1235,7 +1435,7 @@ Agent: [Retrieves and answers with specific information]
 
 | Area | Common Problems | Suggested Solutions |
 |------|----------------|------------------|
-| **Model Selection** | - Responses ignore instructions<br>- Tools (retrieval/search) used incorrectly<br>- Poor context understanding<br>- Hallucinations or incomplete aggregation | - Use more capable LLMs<br>- Prefer models 7B+ for better reasoning<br>- Consider cloud-based models if local models are limited |
+| **Model Selection** | - Responses ignore instructions<br>- Tools (retrieval/search) used incorrectly<br>- Poor context understanding<br>- Hallucinations or incomplete aggregation | - Use more capable LLMs<br>- Prefer models 8B+ for better reasoning<br>- Consider cloud-based models if local models are limited |
 | **System Prompt Behavior** | - Model answers without retrieving documents<br>- Query rewriting loses context<br>- Aggregation introduces hallucinations | - Make retrieval explicit in system prompts<br>- Keep query rewriting close to user intent |
 | **Retrieval Configuration** | - Relevant documents not retrieved<br>- Too much irrelevant information | - Increase retrieved chunks (`k`) or lower similarity thresholds to improve recall<br>- Reduce `k` or increase thresholds to improve precision |
 | **Chunk Size / Document Splitting** | - Answers lack context or feel fragmented<br>- Retrieval is slow or embedding costs are high | - Increase chunk & parent sizes for more context<br>- Decrease chunk sizes to improve speed and reduce costs |

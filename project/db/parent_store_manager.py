@@ -23,6 +23,12 @@ class ParentStoreManager:
         for parent_id, doc in parents:
             self.save(parent_id, doc.page_content, doc.metadata)
 
+    def delete_many(self, parent_ids: List[str]) -> None:
+        for parent_id in parent_ids:
+            file_path = self.__store_path / f"{parent_id}.json"
+            if file_path.exists():
+                file_path.unlink()
+
     def load(self, parent_id: str) -> Dict:
         file_path = self.__store_path / (
             parent_id if parent_id.lower().endswith(".json") else f"{parent_id}.json"
@@ -39,12 +45,23 @@ class ParentStoreManager:
 
     @staticmethod
     def _get_sort_key(id_str):
-        match = re.search(r'_parent_(\d+)$', id_str)
+        match = re.search(r'_(?:parent_|p)(\d+)$', id_str)
         return int(match.group(1)) if match else 0
 
     def load_content_many(self, parent_ids: List[str]) -> List[Dict]:
         unique_ids = set(parent_ids)
         return [self.load_content(pid) for pid in sorted(unique_ids, key=self._get_sort_key)]
+
+    def list_sources(self) -> List[str]:
+        sources = set()
+        for file_path in self.__store_path.glob("*.json"):
+            try:
+                source = json.loads(file_path.read_text(encoding="utf-8")).get("metadata", {}).get("source")
+                if source:
+                    sources.add(source)
+            except (OSError, json.JSONDecodeError):
+                continue
+        return sorted(sources)
     
     def clear_store(self) -> None:
         self.__store_path.mkdir(parents=True, exist_ok=True)

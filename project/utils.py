@@ -6,6 +6,7 @@ import pymupdf4llm
 from pathlib import Path
 import glob
 import tiktoken
+from functools import lru_cache
 
 
 def clear_directory_contents(directory: Path) -> None:
@@ -38,9 +39,24 @@ def pdfs_to_markdowns(path_pattern, overwrite: bool = False):
         if overwrite or not md_path.exists():
             pdf_to_markdown(pdf_path, output_dir)
 
-def estimate_context_tokens(messages: list) -> int:
+@lru_cache(maxsize=1)
+def _get_token_encoding():
     try:
-        encoding = tiktoken.encoding_for_model("gpt-4")
+        return tiktoken.encoding_for_model("gpt-4")
     except Exception:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    return sum(len(encoding.encode(str(msg.content))) for msg in messages if hasattr(msg, 'content') and msg.content)
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            return None
+
+
+def estimate_context_tokens(messages: list) -> int:
+    contents = [
+        str(msg.content)
+        for msg in messages
+        if hasattr(msg, "content") and msg.content
+    ]
+    encoding = _get_token_encoding()
+    if encoding is None:
+        return sum(max(1, len(content) // 4) for content in contents)
+    return sum(len(encoding.encode(content)) for content in contents)

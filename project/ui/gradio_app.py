@@ -32,8 +32,11 @@ def create_gradio_ui():
         return None, format_file_list()
     
     def clear_handler():
-        doc_manager.clear_all()
-        gr.Info(f"🗑️ Removed all documents")
+        try:
+            doc_manager.clear_all()
+            gr.Info("🗑️ Removed all documents")
+        except Exception as exc:
+            gr.Error(f"Unable to clear documents: {exc}")
         return format_file_list()
     
     def chat_handler(msg, hist):
@@ -47,7 +50,7 @@ def create_gradio_ui():
         
         with gr.Tab("Documents", elem_id="doc-management-tab"):
             gr.Markdown("## Add New Documents")
-            gr.Markdown("Upload PDF or Markdown files. Duplicates will be automatically skipped.")
+            gr.Markdown("Upload PDF or Markdown files. Existing documents are skipped; use Clear All before re-indexing.")
             
             files_input = gr.File(
                 label="Drop PDF or Markdown files here",

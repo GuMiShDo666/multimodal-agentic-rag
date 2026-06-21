@@ -54,7 +54,7 @@ class VectorDbManager:
                 print(f"Removing existing Qdrant collection: {collection_name}")
                 self.__client.delete_collection(collection_name)
         except Exception as e:
-            print(f"Warning: could not delete collection {collection_name}: {e}")
+            raise RuntimeError(f"Unable to delete Qdrant collection '{collection_name}'.") from e
 
     def get_collection(self, collection_name) -> QdrantVectorStore:
         try:
@@ -67,4 +67,4 @@ class VectorDbManager:
                     sparse_vector_name=config.SPARSE_VECTOR_NAME
                 )
         except Exception as e:
-            print(f"Unable to get collection {collection_name}: {e}")
+            raise RuntimeError(f"Unable to initialize Qdrant collection '{collection_name}'.") from e

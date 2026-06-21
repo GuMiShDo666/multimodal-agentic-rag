@@ -3,7 +3,7 @@ from langchain_ollama import ChatOllama
 import config
 from db.vector_db_manager import VectorDbManager
 from db.parent_store_manager import ParentStoreManager
-from document_chunker import DocumentChuncker
+from document_chunker import DocumentChunker
 from rag_agent.tools import ToolFactory
 from rag_agent.graph import create_agent_graph
 from core.observability import Observability
@@ -14,7 +14,7 @@ class RAGSystem:
         self.collection_name = collection_name
         self.vector_db = VectorDbManager()
         self.parent_store = ParentStoreManager()
-        self.chunker = DocumentChuncker()
+        self.chunker = DocumentChunker()
         self.observability = Observability()
         self.agent_graph = None
         self.thread_id = str(uuid.uuid4())
@@ -24,7 +24,11 @@ class RAGSystem:
         self.vector_db.create_collection(self.collection_name)
         collection = self.vector_db.get_collection(self.collection_name)
 
-        llm = ChatOllama(model=config.LLM_MODEL, temperature=config.LLM_TEMPERATURE)
+        llm = ChatOllama(
+            model=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            seed=config.LLM_SEED,
+        )
         tools = ToolFactory(collection).create_tools()
         self.agent_graph = create_agent_graph(llm, tools)
 
