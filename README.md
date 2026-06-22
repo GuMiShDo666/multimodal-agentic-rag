@@ -3,7 +3,7 @@
 <p align="center">
   <strong>Agentic RAG system for Chinese text and image rumor detection</strong>
   <br />
-  <em>OCR + BLIP image parsing · Natural-language case database · Qdrant hybrid retrieval · LangGraph agent</em>
+  <em>OCR + BLIP image parsing · Reference article knowledge base · Qdrant hybrid retrieval · LangGraph agent</em>
 </p>
 
 <p align="center">
@@ -20,9 +20,9 @@
 
 ---
 
-RumerDetection-rag is a retrieval-augmented rumor detection application for Chinese text and image claims. It stores labeled rumor cases as searchable natural-language judgments, retrieves similar cases for a new input, and uses an agent workflow to produce a grounded verdict.
+RumerDetection-rag is a retrieval-augmented rumor detection application for Chinese text and image claims. It stores fact-checking and health-science reference articles as a searchable knowledge base, retrieves relevant evidence for a new input, and uses an agent workflow to produce a grounded verdict.
 
-The system is designed for evidence-first answers: if similar cases are missing or weak, the assistant returns `证据不足` instead of forcing a binary classification.
+The system is designed for evidence-first answers: if relevant article evidence is missing or weak, the assistant returns `证据不足` instead of forcing a binary classification.
 
 ## Core Features
 
@@ -30,38 +30,38 @@ The system is designed for evidence-first answers: if similar cases are missing 
 | --- | --- |
 | Text and image detection | Accepts direct text input or uploaded images in the chat UI |
 | OCR + BLIP parsing | Uses PaddleOCR for image text extraction and BLIP for image captioning |
-| Natural case database | Stores each case as a readable judgment such as `喝汤比吃菜更有营养是谣言` |
-| Label mapping | Keeps the explicit labels `1 = 谣言` and `0 = 非谣言` |
-| Hybrid retrieval | Uses Qdrant dense + sparse retrieval to find similar labeled claims |
+| Reference knowledge base | Uses 17 CSV sources under `data/reference_data` as the RAG corpus |
+| Article normalization | Builds a generated `data/rumor_database.csv` with `id`, `source`, `title`, `url`, `date`, and `text` |
+| Hybrid retrieval | Uses Qdrant dense + sparse retrieval to find relevant reference articles |
 | Agentic workflow | Uses LangGraph for query rewriting, retrieval tools, context compression, and synthesis |
-| Evidence-grounded verdict | Returns `谣言`, `非谣言`, or `证据不足` with supporting retrieved cases |
+| Evidence-grounded verdict | Returns `谣言`, `非谣言`, or `证据不足` with supporting retrieved articles |
 
 ## Knowledge Base
 
-The main retrieval database is stored in `data/rumor_database.csv`.
+The source corpus is stored in `data/reference_data/`. It contains 17 CSV files from fact-checking and health-science sources. The build step filters empty articles, removes duplicates, and generates `data/rumor_database.csv` locally for indexing.
 
-Example format:
+Generated database format:
 
 ```csv
-id,statement,label,label_name
-RD-00001,喝汤比吃菜更有营养是谣言,1,谣言
-RD-02687,年轻人同样可能感染并传播病毒不是谣言,0,非谣言
+id,source,title,url,date,text
+REF-00001,中华医学健康科普知识库,老年人总穿拖鞋易疲劳，拖鞋挑选有讲究,https://...,2022-05-18,...
 ```
 
-Current database statistics:
+Current indexed corpus:
 
-| Label | Meaning | Rows |
-| --- | --- | ---: |
-| 1 | 谣言 | 1844 |
-| 0 | 非谣言 | 1513 |
-| total | - | 3357 |
+| Item | Count |
+| --- | ---: |
+| Source CSV files | 17 |
+| Indexed articles | 17183 |
+| Empty-text rows skipped | 691 |
+| Duplicate rows skipped | 298 |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A["Labeled claim database"] --> B["Natural-language case records"]
-    B --> C["Markdown RAG knowledge base"]
+    A["reference_data CSV files"] --> B["Normalized article database"]
+    B --> C["Markdown reference knowledge base"]
     C --> D["Parent-child chunking"]
     D --> E["Qdrant hybrid index"]
     F["User claim"] --> G["LangGraph query rewrite"]
@@ -103,7 +103,7 @@ The default embedding model is `Qwen/Qwen3-Embedding-0.6B`.
 python project/app.py
 ```
 
-Open the Gradio URL, click **Build / Rebuild Rumor RAG Database**, then enter a claim or upload an image in the Chat tab.
+Open the Gradio URL, click **Build / Rebuild Reference RAG Database**, then enter a claim or upload an image in the Chat tab.
 
 ## Evaluation
 
@@ -121,7 +121,9 @@ The evaluator rebuilds the RAG database, runs the LangGraph agent, and exports t
 
 ```text
 data/
-  rumor_database.csv
+  reference_data/
+    *.csv
+  rumor_database.csv  # generated locally
 project/
   app.py
   config.py
@@ -154,7 +156,8 @@ python3 -m json.tool project/evaluation_sample.json
 
 ## Notes
 
-- The assistant uses retrieved cases as evidence rather than relying on a trained classifier alone.
+- The assistant uses retrieved articles as evidence rather than relying on a trained classifier alone.
+- The reference article corpus is the primary retrieval source for text and image rumor detection.
 - Image inputs are parsed before retrieval. OCR text is the primary signal, and BLIP captions are secondary context.
 - The first image request may download OCR and BLIP model weights.
 - The response starts with `判定：谣言`, `判定：非谣言`, or `判定：证据不足`.

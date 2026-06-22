@@ -7,14 +7,12 @@ MARKDOWN_DIR = os.path.join(_BASE_DIR, "markdown_docs")
 PARENT_STORE_PATH = os.path.join(_BASE_DIR, "parent_store")
 QDRANT_DB_PATH = os.path.join(_BASE_DIR, "qdrant_db")
 RUMOR_DATA_DIR = os.path.join(_BASE_DIR, "data")
-TRAIN_CSV = os.path.join(RUMOR_DATA_DIR, "train.csv")
-VALID_CSV = os.path.join(RUMOR_DATA_DIR, "valid.csv")
-TEST_CSV = os.path.join(RUMOR_DATA_DIR, "test.csv")
+REFERENCE_DATA_DIR = os.path.join(RUMOR_DATA_DIR, "reference_data")
 RUMOR_DATABASE_CSV = os.path.join(RUMOR_DATA_DIR, "rumor_database.csv")
 RUMOR_DATABASE_MARKDOWN = os.path.join(MARKDOWN_DIR, "rumor_database.md")
 
 # --- Qdrant Configuration ---
-CHILD_COLLECTION = "rumor_detection_cases"
+CHILD_COLLECTION = "rumor_reference_articles"
 SPARSE_VECTOR_NAME = "sparse"
 
 # --- Model Configuration ---

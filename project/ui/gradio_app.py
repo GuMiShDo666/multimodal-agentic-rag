@@ -20,7 +20,7 @@ def create_gradio_ui():
         result, parent_count, child_count = doc_manager.build_rumor_database(
             progress_callback=lambda p, desc: progress(p, desc=desc)
         )
-        gr.Info(f"Indexed {result['rows']} cases into {parent_count} parent chunks and {child_count} child chunks")
+        gr.Info(f"Indexed {result['rows']} articles into {parent_count} parent chunks and {child_count} child chunks")
         return format_database_summary()
     
     def clear_handler():
@@ -41,10 +41,10 @@ def create_gradio_ui():
     with gr.Blocks(title="RumorDetection RAG") as demo:
         
         with gr.Tab("Rumor Database", elem_id="doc-management-tab"):
-            gr.Markdown("## RumorDetection RAG Database")
-            gr.Markdown("Build a retrieval database from labeled Chinese rumor-detection cases. Label `1` means rumor, and label `0` means non-rumor.")
+            gr.Markdown("## RumorDetection Reference Database")
+            gr.Markdown("Build a retrieval database from reference articles in `data/reference_data`. The agent uses these articles as evidence for rumor detection.")
 
-            build_btn = gr.Button("Build / Rebuild Rumor RAG Database", variant="primary", size="md")
+            build_btn = gr.Button("Build / Rebuild Reference RAG Database", variant="primary", size="md")
 
             gr.Markdown("## Database Status")
             database_summary = gr.Textbox(

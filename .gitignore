@@ -12,3 +12,6 @@ docs/
 
 rag_evaluation_*.csv
 rag_evaluation_*.png
+
+# Generated reference database
+data/rumor_database.csv

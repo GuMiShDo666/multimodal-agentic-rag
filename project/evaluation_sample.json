@@ -1,14 +1,14 @@
 [
   {
-    "question": "吃人参能治百病",
-    "reference": "知识库中存在相似案例：吃人参能治百病是谣言。",
+    "question": "心脏是人体唯一不会癌变的器官",
+    "reference": "参考文章指出人体不存在不会患癌的器官，心脏并非完全不会癌变。",
     "expected_verdict": "谣言",
     "expected_sources": ["rumor_database.csv"]
   },
   {
-    "question": "年轻人同样可能感染并传播病毒",
-    "reference": "知识库中存在相似案例：年轻人同样可能感染并传播病毒不是谣言。",
-    "expected_verdict": "非谣言",
+    "question": "头孢就酒会立马丧命",
+    "reference": "参考文章指出头孢和酒同服有风险，但不等于一定会立马丧命。",
+    "expected_verdict": "谣言",
     "expected_sources": ["rumor_database.csv"]
   }
 ]

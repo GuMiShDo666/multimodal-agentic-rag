@@ -16,28 +16,28 @@ class DocumentManager:
         self.clear_all()
 
         if progress_callback:
-            progress_callback(0.35, desc="Preparing labeled rumor knowledge base")
+            progress_callback(0.35, desc="Preparing reference article knowledge base")
         result = build_rumor_database()
 
         md_path = Path(result["markdown_path"])
         if progress_callback:
-            progress_callback(0.55, desc="Chunking rumor cases")
+            progress_callback(0.55, desc="Chunking reference articles")
         parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(
             md_path,
             source_name=Path(result["csv_path"]).name,
         )
 
         if not child_chunks:
-            raise ValueError("No child chunks were created from the rumor database.")
+            raise ValueError("No child chunks were created from the reference database.")
 
         if progress_callback:
-            progress_callback(0.8, desc="Indexing rumor cases in Qdrant")
+            progress_callback(0.8, desc="Indexing reference articles in Qdrant")
         self.rag_system.parent_store.save_many(parent_chunks)
         collection = self.rag_system.vector_db.get_collection(self.rag_system.collection_name)
         collection.add_documents(child_chunks)
 
         if progress_callback:
-            progress_callback(1.0, desc="Rumor RAG database ready")
+            progress_callback(1.0, desc="Reference RAG database ready")
         return result, len(parent_chunks), len(child_chunks)
     
     def get_markdown_files(self):
