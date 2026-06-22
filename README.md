@@ -182,13 +182,6 @@ The evaluator runs the existing LangGraph agent and exports:
 - reference-overlap proxy score
 - expected-source hit rate
 
-## Resume Highlights
-
-- Built a multimodal RAG ingestion layer for PDFs, images, tables, spreadsheets, and Office documents.
-- Integrated open-source tools including Docling, PaddleOCR, Transformers/BLIP, Camelot, Qdrant, and LangGraph.
-- Preserved a modular RAG architecture by normalizing every source format into Markdown before chunking and indexing.
-- Implemented agentic retrieval with query rewriting, clarification, tool-based search, context compression, trace visualization, deterministic citations, and evaluation metrics.
-
 ## License
 
 This project keeps the original repository license. See [LICENSE](LICENSE).
