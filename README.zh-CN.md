@@ -165,11 +165,11 @@ python3 -m compileall -q project
 
 ## 评测
 
-按 [notebooks/data/multimodal_eval_sample.json](notebooks/data/multimodal_eval_sample.json) 的格式准备 QA 文件，然后运行：
+按 [project/evaluation_sample.json](project/evaluation_sample.json) 的格式准备 QA 文件，然后运行：
 
 ```bash
 python project/evaluation.py \
-  --qa notebooks/data/multimodal_eval_sample.json \
+  --qa project/evaluation_sample.json \
   --documents path/to/file.pdf path/to/table.xlsx path/to/image.png \
   --output rag_evaluation_results.csv
 ```

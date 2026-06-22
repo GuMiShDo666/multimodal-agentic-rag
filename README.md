@@ -165,11 +165,11 @@ The multimodal conversion layer was smoke-tested with CSV and image inputs to ve
 
 ## Evaluation
 
-Create a QA file in the same format as [notebooks/data/multimodal_eval_sample.json](notebooks/data/multimodal_eval_sample.json), then run:
+Create a QA file in the same format as [project/evaluation_sample.json](project/evaluation_sample.json), then run:
 
 ```bash
 python project/evaluation.py \
-  --qa notebooks/data/multimodal_eval_sample.json \
+  --qa project/evaluation_sample.json \
   --documents path/to/file.pdf path/to/table.xlsx path/to/image.png \
   --output rag_evaluation_results.csv
 ```
