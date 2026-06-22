@@ -6,16 +6,21 @@ _BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 MARKDOWN_DIR = os.path.join(_BASE_DIR, "markdown_docs")
 PARENT_STORE_PATH = os.path.join(_BASE_DIR, "parent_store")
 QDRANT_DB_PATH = os.path.join(_BASE_DIR, "qdrant_db")
+RUMOR_DATA_DIR = os.path.join(_BASE_DIR, "data")
+TRAIN_CSV = os.path.join(RUMOR_DATA_DIR, "train.csv")
+VALID_CSV = os.path.join(RUMOR_DATA_DIR, "valid.csv")
+TEST_CSV = os.path.join(RUMOR_DATA_DIR, "test.csv")
+RUMOR_DATABASE_CSV = os.path.join(RUMOR_DATA_DIR, "rumor_database.csv")
+RUMOR_DATABASE_MARKDOWN = os.path.join(MARKDOWN_DIR, "rumor_database.md")
 
 # --- Qdrant Configuration ---
-CHILD_COLLECTION = "document_child_chunks"
+CHILD_COLLECTION = "rumor_detection_cases"
 SPARSE_VECTOR_NAME = "sparse"
 
 # --- Model Configuration ---
 DENSE_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 SPARSE_MODEL = "Qdrant/bm25"
 LLM_MODEL = "granite4.1:8b"
-JUDGE_MODEL = "ministral-3:3b-instruct-2512-q8_0"
 LLM_TEMPERATURE = 0
 LLM_SEED = 42
 
@@ -23,12 +28,6 @@ LLM_SEED = 42
 RETRIEVAL_SCORE_THRESHOLD = 0.4
 DEFAULT_RETRIEVAL_K = 7
 CHILD_CHUNK_SEPARATOR = "\n\n<CHILD_CHUNK_BOUNDARY>\n\n"
-
-# --- Multimodal Ingestion Configuration ---
-IMAGE_CAPTION_MODEL = os.environ.get("IMAGE_CAPTION_MODEL", "Salesforce/blip-image-captioning-base")
-IMAGE_CAPTION_MAX_NEW_TOKENS = int(os.environ.get("IMAGE_CAPTION_MAX_NEW_TOKENS", "80"))
-PADDLEOCR_LANG = os.environ.get("PADDLEOCR_LANG", "ch")
-TABLE_ROWS_PER_MARKDOWN_BLOCK = int(os.environ.get("TABLE_ROWS_PER_MARKDOWN_BLOCK", "200"))
 
 # --- Agent Configuration ---
 MAX_TOOL_CALLS = 8

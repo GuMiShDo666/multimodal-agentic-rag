@@ -49,7 +49,12 @@ def latest_ai_message(messages):
     return ""
 
 
-def evaluate(qa_items, document_paths, output_path):
+def verdict_from_answer(answer):
+    match = re.search(r"判定[:：]\s*(谣言|非谣言|证据不足)", answer)
+    return match.group(1) if match else ""
+
+
+def evaluate(qa_items, output_path, rebuild_database=True):
     from langchain_core.messages import HumanMessage
 
     from core.document_manager import DocumentManager
@@ -59,9 +64,12 @@ def evaluate(qa_items, document_paths, output_path):
     rag_system.initialize()
 
     document_manager = DocumentManager(rag_system)
-    if document_paths:
-        added, skipped = document_manager.add_documents(document_paths)
-        print(f"Documents added: {added}; skipped: {skipped}")
+    if rebuild_database:
+        result, parent_count, child_count = document_manager.build_rumor_database()
+        print(
+            f"Rumor database indexed: {result['rows']} rows, "
+            f"{parent_count} parent chunks, {child_count} child chunks"
+        )
 
     rows = []
     for index, item in enumerate(qa_items, start=1):
@@ -84,6 +92,8 @@ def evaluate(qa_items, document_paths, output_path):
             "question": question,
             "answer": answer,
             "reference": item.get("reference", ""),
+            "expected_verdict": item.get("expected_verdict", ""),
+            "predicted_verdict": verdict_from_answer(answer),
             "sources": "\n".join(sources),
             "expected_sources": "\n".join(item.get("expected_sources", [])),
             "context_count": len(contexts),
@@ -100,6 +110,8 @@ def evaluate(qa_items, document_paths, output_path):
         "question",
         "answer",
         "reference",
+        "expected_verdict",
+        "predicted_verdict",
         "sources",
         "expected_sources",
         "context_count",
@@ -115,13 +127,13 @@ def evaluate(qa_items, document_paths, output_path):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run a lightweight QA evaluation over the Agentic RAG pipeline.")
+    parser = argparse.ArgumentParser(description="Run a lightweight QA evaluation over RumorDetection-RAG.")
     parser.add_argument("--qa", required=True, help="Path to a JSON file containing QA items.")
-    parser.add_argument("--documents", nargs="*", default=[], help="Optional documents to ingest before evaluation.")
     parser.add_argument("--output", default="rag_evaluation_results.csv", help="CSV output path.")
+    parser.add_argument("--no-rebuild", action="store_true", help="Use the existing Qdrant index instead of rebuilding it.")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    evaluate(load_json(args.qa), args.documents, args.output)
+    evaluate(load_json(args.qa), args.output, rebuild_database=not args.no_rebuild)

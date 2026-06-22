@@ -10,6 +10,5 @@ markdown_docs/
 parent_store/
 docs/
 
-ragas_*.csv
 rag_evaluation_*.csv
 rag_evaluation_*.png

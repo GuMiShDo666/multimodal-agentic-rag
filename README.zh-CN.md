@@ -1,9 +1,9 @@
-<h1 align="center">Multimodal Agentic RAG</h1>
+<h1 align="center">RumerDetection-rag</h1>
 
 <p align="center">
-  <strong>面向 PDF、图片、表格、电子表格和 Office 文档的本地优先多模态 RAG 系统</strong>
+  <strong>基于原 RumorDetection CSV 数据库的中文谣言检测 Agentic RAG 系统</strong>
   <br />
-  <em>多模态入库 · LangGraph Agent · Qdrant 混合检索 · Gradio 界面</em>
+  <em>CSV 合并 · Qdrant 混合检索 · LangGraph Agent · 基于证据的谣言判定</em>
 </p>
 
 <p align="center">
@@ -15,83 +15,73 @@
   <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/Agent-LangGraph-0F766E?style=flat-square" alt="LangGraph" />
   <img src="https://img.shields.io/badge/Vector_DB-Qdrant-DC244C?style=flat-square" alt="Qdrant" />
-  <img src="https://img.shields.io/badge/OCR-PaddleOCR-2563EB?style=flat-square" alt="PaddleOCR" />
-  <img src="https://img.shields.io/badge/Parser-Docling-111827?style=flat-square" alt="Docling" />
+  <img src="https://img.shields.io/badge/Dataset-RumorDetection-7C3AED?style=flat-square" alt="RumorDetection" />
 </p>
 
 ---
 
-Multimodal Agentic RAG 是一个本地优先的知识库问答应用。它可以把 PDF、图片、表格、电子表格、Office 文档、HTML、纯文本和 Markdown 统一转换为可检索的 Markdown，再通过 parent-child chunking 和 Qdrant 混合检索建立知识库，最后由 LangGraph 驱动的 Agent 根据检索证据回答问题。
+RumerDetection-rag 将原始 `GuMiShDo666/RumorDetection` 项目里的 `train.csv`、`valid.csv`、`test.csv` 合并为一个检索数据库，并使用 Agentic RAG 工作流对新的中文文本进行谣言检测。
 
-这个项目的核心思路是保留原有 RAG 架构：多模态文件先被标准化成 Markdown，然后继续复用已有的切分、向量索引、检索工具和答案生成流程。
+这个版本不再保留 BERT 训练和模型推理代码，而是把原来的已标注 CSV 数据作为 RAG 知识库。系统会检索相似的已标注案例，比较用户输入与数据库案例，最后给出基于证据的判定。
 
 ## 核心能力
 
 | 能力 | 说明 |
 | --- | --- |
-| 多模态上传 | 支持 PDF、图片、CSV/TSV、Excel、DOCX、PPTX、HTML、TXT 和 Markdown |
-| OCR | 使用 PaddleOCR 提取图片中的可见文字 |
-| 图片说明 | 使用 Hugging Face Transformers + BLIP 生成可检索的图片描述 |
-| 复杂文档解析 | 使用 Docling 将 PDF、DOCX、PPTX 和 HTML 解析为 Markdown |
-| 表格抽取 | 使用 Camelot 抽取 PDF 表格，使用 pandas/openpyxl/xlrd 处理 CSV 和 Excel |
-| Parent-child chunking | 用较小 child chunk 做精准搜索，用较大 parent chunk 补充上下文 |
-| 混合检索 | 在 Qdrant 中结合 dense embedding 和 sparse BM25 检索 |
-| Agentic workflow | LangGraph 负责任务改写、澄清、工具调用、上下文压缩和答案聚合 |
-| 稳定引用溯源 | 最终答案追加来源区块，包含文件名、parent chunk ID 和证据片段预览 |
-| Agent trace | 聊天界面展示原始问题、改写问题、工具调用、工具结果和最终回答步骤 |
-| 评测 CLI | 将 QA 集跑完整 Agent 流程，并导出答案和来源指标到 CSV |
-| 本地界面 | Gradio 提供文档管理和聊天问答入口 |
+| 数据集合并 | 将 `train.csv`、`valid.csv`、`test.csv` 合并为 `data/rumor_database.csv` |
+| 标签映射 | `1 = 谣言`，`0 = 非谣言` |
+| RAG 数据库 | 将合并后的 CSV 转为 Markdown case，用于 parent-child chunking |
+| 混合检索 | 使用 Qdrant dense + sparse 检索相似已标注文本 |
+| Agentic workflow | LangGraph 负责问题改写、工具检索、上下文压缩和最终聚合 |
+| 证据化判定 | 输出 `谣言`、`非谣言` 或 `证据不足`，并附相似案例依据 |
+| 可追踪性 | UI 展示 query rewrite、tool calls、retrieved context 和 deterministic sources |
 
-## 支持的输入格式
+## 数据集
+
+原 RumorDetection 数据保留在 `data/`：
 
 ```text
-.pdf, .md, .txt,
-.png, .jpg, .jpeg, .webp, .bmp, .tif, .tiff,
-.csv, .tsv, .xlsx, .xls,
-.docx, .pptx, .html, .htm
+data/train.csv
+data/valid.csv
+data/test.csv
+data/rumor_database.csv
 ```
+
+当前合并后的数据库：
+
+| Split | Rows |
+| --- | ---: |
+| train | 2685 |
+| valid | 336 |
+| test | 336 |
+| total | 3357 |
+
+标签分布：
+
+| Label | 含义 | Rows |
+| --- | --- | ---: |
+| 1 | 谣言 | 1844 |
+| 0 | 非谣言 | 1513 |
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    A["上传文件"] --> B["多模态 Markdown 转换"]
-    B --> C["Parent-child chunking"]
-    C --> D["Qdrant 混合索引"]
-    E["用户提问"] --> F["问题改写 / 澄清"]
-    F --> G["LangGraph 检索工具"]
-    G --> D
-    G --> H["Parent 上下文回捞"]
-    H --> I["最终答案生成"]
-```
-
-## 项目结构
-
-```text
-project/
-  app.py                         # Gradio 应用入口
-  config.py                      # 模型、检索和入库配置
-  document_chunker.py            # Parent-child chunking
-  core/
-    document_manager.py          # 上传、转换、切分、索引
-    multimodal_processor.py      # 图片/表格/文档转 Markdown 适配器
-    rag_system.py                # Qdrant、LLM、工具、Graph 初始化
-    chat_interface.py            # 流式聊天适配层
-    observability.py             # 可选 Langfuse 观测
-  db/
-    vector_db_manager.py         # Qdrant 混合检索配置
-    parent_store_manager.py      # Parent chunk 存储
-  rag_agent/
-    graph.py                     # LangGraph 工作流
-    nodes.py                     # 问题改写、检索、压缩、聚合节点
-    tools.py                     # search_child_chunks 和 retrieve_parent_chunks
-  ui/
-    gradio_app.py                # 文件上传和聊天 UI
+    A["train / valid / test CSV"] --> B["合并 CSV"]
+    B --> C["rumor_database.csv"]
+    C --> D["Markdown case 数据库"]
+    D --> E["Parent-child chunking"]
+    E --> F["Qdrant 混合索引"]
+    G["用户输入文本"] --> H["LangGraph query rewrite"]
+    H --> I["search_child_chunks"]
+    I --> F
+    I --> J["retrieve_parent_chunks"]
+    J --> K["最终判定生成"]
 ```
 
 ## 快速开始
 
-### 1. 创建 Python 环境
+### 1. 安装依赖
 
 ```bash
 python3 -m venv .venv
@@ -100,7 +90,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 2. 安装并准备 Ollama
+### 2. 准备 Ollama
 
 从 [ollama.com](https://ollama.com) 安装 Ollama，然后拉取默认聊天模型：
 
@@ -108,7 +98,7 @@ python -m pip install -r requirements.txt
 ollama pull granite4.1:8b
 ```
 
-默认 embedding 模型是 `Qwen/Qwen3-Embedding-0.6B`，首次运行时会通过 Hugging Face 相关工具下载。
+默认 embedding 模型是 `Qwen/Qwen3-Embedding-0.6B`。
 
 ### 3. 启动应用
 
@@ -116,71 +106,69 @@ ollama pull granite4.1:8b
 python project/app.py
 ```
 
-打开本地 Gradio 地址，在 Documents 页上传文件，然后在 Chat 页提问。
+打开 Gradio 地址，点击 **Build / Rebuild Rumor RAG Database**，然后在 Chat 页输入待检测文本。
 
-## 配置
+## 评测
 
-主要配置在 [project/config.py](project/config.py)。
+运行轻量 QA 评测：
 
-```python
-DENSE_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-SPARSE_MODEL = "Qdrant/bm25"
-LLM_MODEL = "granite4.1:8b"
-RETRIEVAL_SCORE_THRESHOLD = 0.4
-DEFAULT_RETRIEVAL_K = 7
-
-IMAGE_CAPTION_MODEL = "Salesforce/blip-image-captioning-base"
-PADDLEOCR_LANG = "ch"
-TABLE_ROWS_PER_MARKDOWN_BLOCK = 200
+```bash
+python project/evaluation.py \
+  --qa project/evaluation_sample.json \
+  --output rag_evaluation_results.csv
 ```
 
-运行时数据不会提交到 Git：
+评测脚本会重建 RAG 数据库、运行 LangGraph Agent，并导出：
+
+- predicted verdict
+- final answer
+- deterministic sources
+- retrieved context count
+- reference-overlap proxy score
+- expected-source hit rate
+
+## 项目结构
 
 ```text
-qdrant_db/
-markdown_docs/
-parent_store/
-.env
-.venv/
+data/
+  train.csv
+  valid.csv
+  test.csv
+  rumor_database.csv
+project/
+  app.py
+  config.py
+  rumor_database.py
+  document_chunker.py
+  core/
+    document_manager.py
+    rag_system.py
+    chat_interface.py
+  db/
+    vector_db_manager.py
+    parent_store_manager.py
+  rag_agent/
+    graph.py
+    nodes.py
+    tools.py
+    prompts.py
+  ui/
+    gradio_app.py
 ```
-
-## 首次运行说明
-
-部分格式首次上传时会初始化较重的模型或解析器：
-
-- 图片说明会通过 Transformers 初始化 BLIP 模型
-- OCR 会初始化 PaddleOCR
-- 文档解析会初始化 Docling
-- PDF 表格抽取会初始化 Camelot
-
-转换完成后，所有内容都会以 Markdown 形式进入同一套 RAG 入库流程。
 
 ## 验证
 
 ```bash
 python3 -m compileall -q project
+python3 project/evaluation.py --help
+python3 -m json.tool project/evaluation_sample.json
 ```
 
-多模态转换层已用 CSV 和图片输入做过轻量 smoke test，确认在索引前可以正常生成 Markdown。
+## 说明
 
-## 评测
-
-按 [project/evaluation_sample.json](project/evaluation_sample.json) 的格式准备 QA 文件，然后运行：
-
-```bash
-python project/evaluation.py \
-  --qa project/evaluation_sample.json \
-  --documents path/to/file.pdf path/to/table.xlsx path/to/image.png \
-  --output rag_evaluation_results.csv
-```
-
-评测脚本会调用现有 LangGraph Agent，并导出：
-
-- 最终答案
-- deterministic `Sources` 来源区块
-- 检索上下文数量
-- reference overlap 代理分数
-- expected source hit rate 来源命中率
+- 本项目不上传原来的 BERT 训练/推理代码。
+- RAG 工作流使用原始 CSV 标签作为判定证据。
+- 系统是基于检索证据的辅助判断，不是医学权威；当相似案例不足或冲突时，应输出 `证据不足`。
 
 ## License
 
