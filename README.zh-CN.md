@@ -37,6 +37,9 @@ Multimodal Agentic RAG 是一个本地优先的知识库问答应用。它可以
 | Parent-child chunking | 用较小 child chunk 做精准搜索，用较大 parent chunk 补充上下文 |
 | 混合检索 | 在 Qdrant 中结合 dense embedding 和 sparse BM25 检索 |
 | Agentic workflow | LangGraph 负责任务改写、澄清、工具调用、上下文压缩和答案聚合 |
+| 稳定引用溯源 | 最终答案追加来源区块，包含文件名、parent chunk ID 和证据片段预览 |
+| Agent trace | 聊天界面展示原始问题、改写问题、工具调用、工具结果和最终回答步骤 |
+| 评测 CLI | 将 QA 集跑完整 Agent 流程，并导出答案和来源指标到 CSV |
 | 本地界面 | Gradio 提供文档管理和聊天问答入口 |
 
 ## 支持的输入格式
@@ -160,12 +163,31 @@ python3 -m compileall -q project
 
 多模态转换层已用 CSV 和图片输入做过轻量 smoke test，确认在索引前可以正常生成 Markdown。
 
+## 评测
+
+按 [notebooks/data/multimodal_eval_sample.json](notebooks/data/multimodal_eval_sample.json) 的格式准备 QA 文件，然后运行：
+
+```bash
+python project/evaluation.py \
+  --qa notebooks/data/multimodal_eval_sample.json \
+  --documents path/to/file.pdf path/to/table.xlsx path/to/image.png \
+  --output rag_evaluation_results.csv
+```
+
+评测脚本会调用现有 LangGraph Agent，并导出：
+
+- 最终答案
+- deterministic `Sources` 来源区块
+- 检索上下文数量
+- reference overlap 代理分数
+- expected source hit rate 来源命中率
+
 ## 简历亮点
 
 - 为 PDF、图片、表格、电子表格和 Office 文档构建多模态 RAG 入库层。
 - 集成 Docling、PaddleOCR、Transformers/BLIP、Camelot、Qdrant 和 LangGraph 等开源工具。
 - 通过“统一转 Markdown”的方式保留模块化 RAG 架构，避免重写检索和 Agent 流程。
-- 实现包含问题改写、澄清、工具检索、上下文压缩和答案聚合的 Agentic RAG 工作流。
+- 实现包含问题改写、澄清、工具检索、上下文压缩、trace 可视化、稳定引用溯源和评测指标的 Agentic RAG 工作流。
 
 ## License
 

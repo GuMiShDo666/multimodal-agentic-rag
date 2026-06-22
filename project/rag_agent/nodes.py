@@ -1,3 +1,4 @@
+import re
 from typing import Literal, Set
 from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage, AIMessage, ToolMessage
 from langgraph.types import Command
@@ -39,6 +40,72 @@ def _retrieval_contexts(messages) -> list[str]:
             parts = content.split(CHILD_CHUNK_SEPARATOR) if message.name == "search_child_chunks" else [content]
             contexts.extend(part for part in parts if part)
     return list(dict.fromkeys(contexts))
+
+def _extract_field(text, field):
+    match = re.search(rf"^{re.escape(field)}:\s*(.+)$", text, flags=re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+def _source_preview(text, max_chars=180):
+    content = _extract_field(text, "Content")
+    if not content:
+        return ""
+    preview = re.sub(r"\s+", " ", content).strip()
+    return preview[:max_chars].rstrip() + ("..." if len(preview) > max_chars else "")
+
+def _source_entries_from_contexts(contexts) -> list[dict]:
+    entries = []
+    seen = set()
+    for context in contexts:
+        file_name = _extract_field(context, "File Name")
+        if not file_name:
+            continue
+        parent_id = _extract_field(context, "Parent ID")
+        preview = _source_preview(context)
+        key = (file_name, parent_id, preview)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append({
+            "file": file_name,
+            "parent_id": parent_id,
+            "preview": preview,
+        })
+    return entries
+
+def _merge_source_entries(agent_answers) -> list[dict]:
+    merged = []
+    seen = set()
+    for answer in agent_answers:
+        for source in answer.get("sources", []):
+            key = (
+                source.get("file", ""),
+                source.get("parent_id", ""),
+                source.get("preview", ""),
+            )
+            if key in seen or not key[0]:
+                continue
+            seen.add(key)
+            merged.append(source)
+    return merged
+
+def _format_sources_section(sources) -> str:
+    if not sources:
+        return ""
+
+    lines = ["Sources:"]
+    for source in sources:
+        details = []
+        if source.get("parent_id"):
+            details.append(f"chunk `{source['parent_id']}`")
+        if source.get("preview"):
+            details.append(source["preview"])
+
+        suffix = f" — {'; '.join(details)}" if details else ""
+        lines.append(f"- {source['file']}{suffix}")
+    return "\n".join(lines)
+
+def _strip_sources_section(text) -> str:
+    return re.sub(r"\n*\bSources:\s*\n(?:- .*(?:\n|$))*\s*$", "", text.strip(), flags=re.IGNORECASE)
 
 def _format_conversation(messages) -> str:
     lines = []
@@ -299,13 +366,15 @@ def collect_answer(state: AgentState):
     last_message = state["messages"][-1]
     is_valid = isinstance(last_message, AIMessage) and last_message.content and not last_message.tool_calls
     answer = last_message.content if is_valid else "Unable to generate an answer."
+    contexts = state.get("retrieved_contexts", [])
     return {
         "final_answer": answer,
         "agent_answers": [{
             "index": state["question_index"],
             "question": state["question"],
             "answer": answer,
-            "contexts": state.get("retrieved_contexts", []),
+            "contexts": contexts,
+            "sources": _source_entries_from_contexts(contexts),
         }]
     }
 # --- End of Agent Nodes---
@@ -325,7 +394,14 @@ def aggregate_answers(state: State, llm):
     formatted_answers = ""
     for i, ans in enumerate(sorted_answers, start=1):
         formatted_answers += (f"\nRetrieved response {i}:\n"f"{ans['answer']}\n")
+        source_section = _format_sources_section(ans.get("sources", []))
+        if source_section:
+            formatted_answers += f"{source_section}\n"
 
     user_message = HumanMessage(content=f"""Original user question: {state["originalQuery"]}\nRetrieved answers:{formatted_answers}""")
     synthesis_response = llm.invoke([SystemMessage(content=get_aggregation_prompt()), user_message])
-    return {"messages": removals + [AIMessage(content=synthesis_response.content)]}
+    final_answer = _strip_sources_section(synthesis_response.content)
+    sources_section = _format_sources_section(_merge_source_entries(sorted_answers))
+    if sources_section:
+        final_answer = f"{final_answer}\n\n{sources_section}"
+    return {"messages": removals + [AIMessage(content=final_answer)]}

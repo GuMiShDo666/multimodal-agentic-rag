@@ -52,6 +52,27 @@ def format_rewrite_content(buffer):
             lines.append(f"\nClarification needed: *{clarification}*")
     return "\n".join(lines)
 
+
+def compact_json(value, max_chars=180):
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except Exception:
+        text = str(value)
+    return text[:max_chars].rstrip() + ("..." if len(text) > max_chars else "")
+
+
+def add_trace_event(response_messages, trace_events, trace_keys, key, event):
+    if key in trace_keys:
+        return
+    trace_keys.add(key)
+    trace_events.append(event)
+    content = "\n".join(f"{index}. {item}" for index, item in enumerate(trace_events, start=1))
+    idx = find_msg_idx(response_messages, "agent_trace")
+    if idx is None:
+        response_messages.append(make_message(content, title="🧭 Agent Trace", node="agent_trace"))
+    else:
+        response_messages[idx]["content"] = content
+
 # --- End of Helpers ---
 
 class ChatInterface:
@@ -59,7 +80,7 @@ class ChatInterface:
     def __init__(self, rag_system):
         self.rag_system = rag_system
 
-    def _handle_system_node(self, chunk, node, response_messages, system_node_buffer):
+    def _handle_system_node(self, chunk, node, response_messages, system_node_buffer, trace_events, trace_keys):
         """Update (or create) the collapsible system-node message and surface any clarification."""
         system_node_buffer[node] = system_node_buffer.get(node, "") + chunk.content
         buffer = system_node_buffer[node]
@@ -74,6 +95,25 @@ class ChatInterface:
 
         if node == "rewrite_query":
             self._surface_clarification(buffer, response_messages)
+            data = parse_rewrite_json(buffer)
+            if data:
+                if data.get("is_clear") and data.get("questions"):
+                    rewritten = "; ".join(data["questions"])
+                    add_trace_event(
+                        response_messages,
+                        trace_events,
+                        trace_keys,
+                        f"rewrite:{rewritten}",
+                        f"Rewritten query: {rewritten}",
+                    )
+                elif data.get("clarification_needed"):
+                    add_trace_event(
+                        response_messages,
+                        trace_events,
+                        trace_keys,
+                        f"clarification:{data['clarification_needed']}",
+                        f"Clarification requested: {data['clarification_needed']}",
+                    )
 
     def _surface_clarification(self, buffer, response_messages):
         """If the query is unclear, add/update a plain clarification message."""
@@ -86,7 +126,7 @@ class ChatInterface:
             else:
                 response_messages[cidx]["content"] = clarification
 
-    def _handle_tool_call(self, chunk, response_messages, active_tool_calls):
+    def _handle_tool_call(self, chunk, response_messages, active_tool_calls, trace_events, trace_keys):
         """Register new tool calls as collapsible messages."""
         for tc in chunk.tool_calls:
             if tc.get("id") and tc["id"] not in active_tool_calls:
@@ -94,14 +134,28 @@ class ChatInterface:
                     make_message(f"Running `{tc['name']}`...", title=f"🛠️ {tc['name']}")
                 )
                 active_tool_calls[tc["id"]] = len(response_messages) - 1
+                add_trace_event(
+                    response_messages,
+                    trace_events,
+                    trace_keys,
+                    f"tool_call:{tc['id']}",
+                    f"Tool call: `{tc['name']}` with `{compact_json(tc.get('args', {}))}`",
+                )
 
-    def _handle_tool_result(self, chunk, response_messages, active_tool_calls):
+    def _handle_tool_result(self, chunk, response_messages, active_tool_calls, trace_events, trace_keys):
         """Fill in the tool result inside the matching collapsible message."""
         idx = active_tool_calls.get(chunk.tool_call_id)
         if idx is not None:
             preview = str(chunk.content)[:300]
             suffix  = "\n..." if len(str(chunk.content)) > 300 else ""
             response_messages[idx]["content"] = f"```\n{preview}{suffix}\n```"
+            add_trace_event(
+                response_messages,
+                trace_events,
+                trace_keys,
+                f"tool_result:{chunk.tool_call_id}",
+                f"Tool result: `{getattr(chunk, 'name', 'tool')}` returned {len(str(chunk.content))} characters",
+            )
 
     def _handle_llm_token(self, chunk, node, response_messages):
         """Append streaming LLM tokens to the last plain assistant message."""
@@ -130,18 +184,27 @@ class ChatInterface:
             response_messages  = []
             active_tool_calls  = {}
             system_node_buffer = {}
+            trace_events       = []
+            trace_keys         = set()
+            add_trace_event(
+                response_messages,
+                trace_events,
+                trace_keys,
+                "original_query",
+                f"Original query: {message.strip()}",
+            )
 
             for chunk, metadata in self.rag_system.agent_graph.stream(stream_input, config=config, stream_mode="messages"):
                 node = metadata.get("langgraph_node", "")
 
                 if node in SYSTEM_NODES and isinstance(chunk, AIMessageChunk) and chunk.content:
-                    self._handle_system_node(chunk, node, response_messages, system_node_buffer)
+                    self._handle_system_node(chunk, node, response_messages, system_node_buffer, trace_events, trace_keys)
 
                 elif hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                    self._handle_tool_call(chunk, response_messages, active_tool_calls)
+                    self._handle_tool_call(chunk, response_messages, active_tool_calls, trace_events, trace_keys)
 
                 elif isinstance(chunk, ToolMessage):
-                    self._handle_tool_result(chunk, response_messages, active_tool_calls)
+                    self._handle_tool_result(chunk, response_messages, active_tool_calls, trace_events, trace_keys)
 
                 elif isinstance(chunk, AIMessageChunk) and chunk.content and node in FINAL_RESPONSE_NODES:
                     self._handle_llm_token(chunk, node, response_messages)
@@ -153,6 +216,14 @@ class ChatInterface:
 
             final_state = self.rag_system.agent_graph.get_state(config)
             log_chat_end(getattr(final_state, "values", final_state))
+            add_trace_event(
+                response_messages,
+                trace_events,
+                trace_keys,
+                "final_answer",
+                "Final answer streamed to the user.",
+            )
+            yield response_messages
 
         except Exception as e:
             log_error("chat", e)

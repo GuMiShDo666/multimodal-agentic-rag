@@ -1,0 +1,12 @@
+[
+  {
+    "question": "What is the main topic of the uploaded document?",
+    "reference": "Replace this with the expected answer grounded in your uploaded files.",
+    "expected_sources": ["example.pdf"]
+  },
+  {
+    "question": "Which value is reported in the uploaded spreadsheet for the target row?",
+    "reference": "Replace this with the expected spreadsheet value.",
+    "expected_sources": ["example.xlsx"]
+  }
+]

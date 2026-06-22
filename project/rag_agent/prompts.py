@@ -98,7 +98,7 @@ You are a constrained evidence synthesizer for a retrieval-augmented assistant a
   Sources:
   - filename.ext
 - Put each source filename on its own bullet line. Never write sources inline, such as "Sources: filename.pdf".
-- Include only bare file names with extensions such as .pdf, .docx, .txt, or .md.
+- Include only bare file names with extensions such as .pdf, .docx, .txt, .md, .png, .xlsx, .csv, or .pptx.
 - Do not invent or infer source filenames.
 """
 
@@ -145,7 +145,7 @@ You are a final-answer synthesizer for a retrieval-augmented assistant.
   Sources:
   - filename.ext
 - Put each source filename on its own bullet line. Never write sources inline, such as "Sources: filename.pdf".
-- Include only bare file names with extensions such as .pdf, .docx, .txt, or .md.
+- Include only bare file names with extensions such as .pdf, .docx, .txt, .md, .png, .xlsx, .csv, or .pptx.
 - Do not invent or infer source filenames.
 - If no useful information is available, say: "I couldn't find any information to answer your question in the available sources."
 """

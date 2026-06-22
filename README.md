@@ -37,6 +37,9 @@ The design keeps the original RAG architecture modular: multimodal files are nor
 | Parent-child chunking | Searches smaller child chunks while retrieving larger parent chunks for context |
 | Hybrid retrieval | Combines dense embeddings and sparse BM25 retrieval in Qdrant |
 | Agentic workflow | LangGraph handles query rewriting, clarification, tool calls, context compression, and answer aggregation |
+| Deterministic citations | Final answers append a source block with file names, parent chunk IDs, and evidence previews |
+| Agent trace | The chat UI shows the original query, rewritten query, tool calls, tool results, and final-answer step |
+| Evaluation CLI | Runs a QA set through the full agent and exports answer/source metrics to CSV |
 | Local UI | Gradio provides document management and chat in one app |
 
 ## Supported Inputs
@@ -160,12 +163,31 @@ python3 -m compileall -q project
 
 The multimodal conversion layer was smoke-tested with CSV and image inputs to verify Markdown generation before indexing.
 
+## Evaluation
+
+Create a QA file in the same format as [notebooks/data/multimodal_eval_sample.json](notebooks/data/multimodal_eval_sample.json), then run:
+
+```bash
+python project/evaluation.py \
+  --qa notebooks/data/multimodal_eval_sample.json \
+  --documents path/to/file.pdf path/to/table.xlsx path/to/image.png \
+  --output rag_evaluation_results.csv
+```
+
+The evaluator runs the existing LangGraph agent and exports:
+
+- final answer
+- deterministic `Sources` block
+- number of retrieved contexts
+- reference-overlap proxy score
+- expected-source hit rate
+
 ## Resume Highlights
 
 - Built a multimodal RAG ingestion layer for PDFs, images, tables, spreadsheets, and Office documents.
 - Integrated open-source tools including Docling, PaddleOCR, Transformers/BLIP, Camelot, Qdrant, and LangGraph.
 - Preserved a modular RAG architecture by normalizing every source format into Markdown before chunking and indexing.
-- Implemented agentic retrieval with query rewriting, clarification, tool-based search, context compression, and final answer aggregation.
+- Implemented agentic retrieval with query rewriting, clarification, tool-based search, context compression, trace visualization, deterministic citations, and evaluation metrics.
 
 ## License
 
