@@ -1,6 +1,6 @@
-import sys
-import os
 import logging
+import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -16,11 +16,46 @@ class _SuppressOtelDetachWarning(logging.Filter):
 
 logging.getLogger("opentelemetry.context").addFilter(_SuppressOtelDetachWarning())
 
-from ui.css import custom_css
-from ui.gradio_app import create_gradio_ui
+def _launch_auth():
+    username = os.environ.get("RAG_AUTH_USERNAME", "").strip()
+    password = os.environ.get("RAG_AUTH_PASSWORD", "").strip()
+    if username and password:
+        return (username, password)
+    if password:
+        return ("admin", password)
+    return None
+
+def _server_host():
+    return os.environ.get("RAG_SERVER_NAME", "127.0.0.1")
+
+def _server_port():
+    return int(os.environ.get("RAG_SERVER_PORT", "7860"))
+
+def _launch_gradio():
+    from ui.css import custom_css
+    from ui.gradio_app import create_gradio_ui
+
+    print("\nCreating RumorDetection RAG Gradio UI...")
+    demo = create_gradio_ui()
+    print("\nLaunching RumorDetection RAG...")
+    demo.launch(
+        css=custom_css,
+        server_name=_server_host(),
+        server_port=_server_port(),
+        auth=_launch_auth(),
+    )
+
+def _launch_html():
+    import uvicorn
+    from web_app import create_web_app
+
+    print("\nCreating RumorDetection RAG web app...")
+    app = create_web_app()
+    print("\nLaunching RumorDetection RAG...")
+    uvicorn.run(app, host=_server_host(), port=_server_port())
 
 if __name__ == "__main__":
-    print("\n🔨 Creating RumorDetection RAG...")
-    demo = create_gradio_ui()
-    print("\n🚀 Launching RumorDetection RAG...")
-    demo.launch(css=custom_css)
+    if os.environ.get("RAG_UI_MODE", "html").strip().lower() == "gradio":
+        _launch_gradio()
+    else:
+        _launch_html()

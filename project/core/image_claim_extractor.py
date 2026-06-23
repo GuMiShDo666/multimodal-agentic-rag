@@ -52,14 +52,14 @@ class ImageClaimExtractor:
         return "\n".join(lines)
 
     def to_summary_markdown(self, result, index=1):
-        lines = [f"**Image {index}: `{result['name']}`**"]
+        lines = [f"**图片 {index}: `{result['name']}`**"]
         if result.get("ocr_text"):
-            lines.extend(["", "**OCR Text**", result["ocr_text"]])
+            lines.extend(["", "**OCR 识别文本**", result["ocr_text"]])
         if result.get("caption"):
-            lines.extend(["", "**BLIP Caption**", result["caption"]])
+            lines.extend(["", "**BLIP 图片说明**", result["caption"]])
         notes = [note for note in (result.get("ocr_error"), result.get("caption_error")) if note]
         if notes:
-            lines.extend(["", "**Extraction Notes**"])
+            lines.extend(["", "**解析提示**"])
             lines.extend(f"- {note}" for note in notes)
         return "\n".join(lines)
 
@@ -71,23 +71,24 @@ class ImageClaimExtractor:
 
     def _caption_image(self, image_path):
         from PIL import Image
-        from transformers import pipeline
+        import torch
+        from transformers import BlipForConditionalGeneration, BlipProcessor
 
         if self._captioner is None:
-            self._captioner = pipeline(
-                "image-to-text",
-                model=config.IMAGE_CAPTION_MODEL,
-            )
+            processor = BlipProcessor.from_pretrained(config.IMAGE_CAPTION_MODEL)
+            model = BlipForConditionalGeneration.from_pretrained(config.IMAGE_CAPTION_MODEL)
+            model.eval()
+            self._captioner = (processor, model)
 
+        processor, model = self._captioner
         image = Image.open(image_path).convert("RGB")
-        result = self._captioner(
-            image,
-            max_new_tokens=config.IMAGE_CAPTION_MAX_NEW_TOKENS,
-        )
-        if not result:
-            return ""
-        first = result[0]
-        return str(first.get("generated_text", first)).strip()
+        inputs = processor(image, return_tensors="pt")
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=config.IMAGE_CAPTION_MAX_NEW_TOKENS,
+            )
+        return processor.decode(generated_ids[0], skip_special_tokens=True).strip()
 
     def _safe_ocr_image(self, image_path):
         try:

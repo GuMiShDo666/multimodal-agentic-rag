@@ -16,11 +16,12 @@ CHILD_COLLECTION = "rumor_reference_articles"
 SPARSE_VECTOR_NAME = "sparse"
 
 # --- Model Configuration ---
-DENSE_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-SPARSE_MODEL = "Qdrant/bm25"
-LLM_MODEL = "granite4.1:8b"
-LLM_TEMPERATURE = 0
-LLM_SEED = 42
+DENSE_MODEL = os.environ.get("DENSE_MODEL", "BAAI/bge-small-zh-v1.5")
+SPARSE_MODEL = os.environ.get("SPARSE_MODEL", "Qdrant/bm25")
+LLM_MODEL = os.environ.get("LLM_MODEL", "granite4.1:8b")
+LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0"))
+LLM_SEED = int(os.environ.get("LLM_SEED", "42"))
+RAG_FORCE_RETRIEVAL_FALLBACK = os.environ.get("RAG_FORCE_RETRIEVAL_FALLBACK", "false").lower() == "true"
 IMAGE_CAPTION_MODEL = os.environ.get("IMAGE_CAPTION_MODEL", "Salesforce/blip-image-captioning-base")
 IMAGE_CAPTION_MAX_NEW_TOKENS = int(os.environ.get("IMAGE_CAPTION_MAX_NEW_TOKENS", "80"))
 PADDLEOCR_LANG = os.environ.get("PADDLEOCR_LANG", "ch")
@@ -44,10 +45,11 @@ EXECUTION_LOG_MAX_CHARS = 1200
 EXECUTION_LOG_USE_COLOR = True
 
 # --- Text Splitter Configuration ---
-CHILD_CHUNK_SIZE = 500
-CHILD_CHUNK_OVERLAP = 100
-MIN_PARENT_SIZE = 2000
-MAX_PARENT_SIZE = 4000
+CHILD_CHUNK_SIZE = int(os.environ.get("CHILD_CHUNK_SIZE", "500"))
+CHILD_CHUNK_OVERLAP = int(os.environ.get("CHILD_CHUNK_OVERLAP", "100"))
+MIN_PARENT_SIZE = int(os.environ.get("MIN_PARENT_SIZE", "2000"))
+MAX_PARENT_SIZE = int(os.environ.get("MAX_PARENT_SIZE", "4000"))
+INDEX_BATCH_SIZE = int(os.environ.get("INDEX_BATCH_SIZE", "512"))
 HEADERS_TO_SPLIT_ON = [
     ("#", "H1"),
     ("##", "H2"),

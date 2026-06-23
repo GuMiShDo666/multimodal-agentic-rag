@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>谣言检测 RAG</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">RumorDetection RAG</p>
+          <h1>多模态谣言检测工作台</h1>
+          <p class="subtitle">输入文本或上传截图，系统会抽取主张、检索知识库并输出核验结论。</p>
+        </div>
+        <div class="status-cluster" aria-label="系统能力概览">
+          <span>文本检测</span>
+          <span>图片 OCR</span>
+          <span>BLIP 说明</span>
+          <span>Agentic RAG</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="input-card" aria-labelledby="input-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">Step 01</p>
+              <h2 id="input-title">提交待核验内容</h2>
+            </div>
+            <button id="reset-session" class="ghost-button" type="button">清空会话</button>
+          </div>
+
+          <form id="detect-form" class="detect-form">
+            <label class="field-label" for="claim-text">文本内容</label>
+            <textarea id="claim-text" name="text" rows="9" placeholder="输入需要核验的说法，例如：喝汤比吃菜更有营养"></textarea>
+
+            <label class="field-label" for="claim-image">图片内容</label>
+            <label class="upload-box" for="claim-image">
+              <input id="claim-image" name="image" type="file" accept="image/*" />
+              <span class="upload-title">选择图片</span>
+              <span id="file-name" class="upload-meta">支持 png、jpg、jpeg、webp、bmp、tif</span>
+            </label>
+            <img id="image-preview" class="image-preview" alt="上传图片预览" />
+
+            <div class="actions">
+              <button id="submit-button" class="primary-button" type="submit">开始检测</button>
+              <button id="clear-input" class="secondary-button" type="button">清空输入</button>
+            </div>
+          </form>
+        </aside>
+
+        <section class="output-column" aria-labelledby="result-title">
+          <section class="result-card">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Step 02</p>
+                <h2 id="result-title">检测结论</h2>
+              </div>
+              <span id="run-state" class="run-state">待检测</span>
+            </div>
+
+            <div id="answer-content" class="answer-content empty">提交文本或图片后，这里会显示模型给出的判断。</div>
+          </section>
+
+          <section class="details-grid" aria-label="检索详情">
+            <article class="detail-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">Step 03</p>
+                  <h2>过程与证据</h2>
+                </div>
+              </div>
+              <div id="message-list" class="message-list">
+                <div class="empty-state">暂无检索过程。</div>
+              </div>
+            </article>
+
+            <article class="detail-card compact">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">Database</p>
+                  <h2>知识库状态</h2>
+                </div>
+                <button id="refresh-db" class="ghost-button" type="button">刷新</button>
+              </div>
+              <pre id="database-summary" class="database-summary">正在读取知识库状态...</pre>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

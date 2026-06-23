@@ -40,7 +40,11 @@ def iter_reference_csv_files(source_dir=config.REFERENCE_DATA_DIR):
     source_dir = Path(source_dir)
     if not source_dir.exists():
         raise FileNotFoundError(f"Missing reference data directory: {source_dir}")
-    return sorted(path for path in source_dir.glob("*.csv") if path.is_file())
+    return sorted(
+        path
+        for path in source_dir.glob("*.csv")
+        if path.is_file() and not path.name.startswith(".")
+    )
 
 
 def read_reference_rows(source_dir=config.REFERENCE_DATA_DIR):
@@ -169,7 +173,7 @@ def build_rumor_database():
 def database_summary():
     csv_path = Path(config.RUMOR_DATABASE_CSV)
     if not csv_path.exists():
-        return "Reference database has not been built yet."
+        return "参考知识库尚未构建。"
 
     total = 0
     source_counts = Counter()
@@ -184,8 +188,8 @@ def database_summary():
         for source, count in source_counts.most_common(10)
     )
     return (
-        f"Rows: {total}\n"
-        f"Sources: {len(source_counts)}\n"
-        f"Top sources:\n{top_sources}\n"
-        f"CSV: {csv_path}"
+        f"文章数量：{total}\n"
+        f"来源数量：{len(source_counts)}\n"
+        f"主要来源：\n{top_sources}\n"
+        f"CSV 路径：{csv_path}"
     )

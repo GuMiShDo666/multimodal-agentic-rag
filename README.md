@@ -24,6 +24,16 @@ RumerDetection-rag is a retrieval-augmented rumor detection application for Chin
 
 The system is designed for evidence-first answers: if relevant article evidence is missing or weak, the assistant returns `证据不足` instead of forcing a binary classification.
 
+## Interface Preview
+
+### System Dashboard
+
+![System dashboard](docs/screenshots/system-overview.png)
+
+### Detection Result After Text Input
+
+![Detection result after text input](docs/screenshots/detection-result.png)
+
 ## Core Features
 
 | Feature | Description |
@@ -81,7 +91,7 @@ flowchart LR
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+python -m pip install paddlepaddle -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
 python -m pip install -r requirements.txt
 ```
 
@@ -103,7 +113,7 @@ The default embedding model is `Qwen/Qwen3-Embedding-0.6B`.
 python project/app.py
 ```
 
-Open the Gradio URL, click **Build / Rebuild Reference RAG Database**, then enter a claim or upload an image in the Chat tab.
+Open the local web URL, then enter a claim or upload an image on the detection page.
 
 ## Evaluation
 

@@ -3,12 +3,13 @@ __pycache__/
 .vscode/
 .env
 .venv/
+.deploy-venv/
 venv/
+dist/
 
 qdrant_db/
 markdown_docs/
 parent_store/
-docs/
 
 rag_evaluation_*.csv
 rag_evaluation_*.png

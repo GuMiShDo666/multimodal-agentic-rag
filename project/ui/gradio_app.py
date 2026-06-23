@@ -20,15 +20,15 @@ def create_gradio_ui():
         result, parent_count, child_count = doc_manager.build_rumor_database(
             progress_callback=lambda p, desc: progress(p, desc=desc)
         )
-        gr.Info(f"Indexed {result['rows']} articles into {parent_count} parent chunks and {child_count} child chunks")
+        gr.Info(f"已索引 {result['rows']} 篇文章，生成 {parent_count} 个父文本块和 {child_count} 个子文本块")
         return format_database_summary()
     
     def clear_handler():
         try:
             doc_manager.clear_all()
-            gr.Info("🗑️ Removed all documents")
+            gr.Info("已清空知识库")
         except Exception as exc:
-            gr.Error(f"Unable to clear documents: {exc}")
+            gr.Error(f"清空知识库失败：{exc}")
         return format_database_summary()
     
     def chat_handler(msg, hist):
@@ -38,15 +38,15 @@ def create_gradio_ui():
     def clear_chat_handler():
         chat_interface.clear_session()
     
-    with gr.Blocks(title="RumorDetection RAG") as demo:
+    with gr.Blocks(title="谣言检测 RAG") as demo:
         
-        with gr.Tab("Rumor Database", elem_id="doc-management-tab"):
-            gr.Markdown("## RumorDetection Reference Database")
-            gr.Markdown("Build a retrieval database from reference articles in `data/reference_data`. The agent uses these articles as evidence for rumor detection.")
+        with gr.Tab("知识库", elem_id="doc-management-tab"):
+            gr.Markdown("## 谣言检测参考知识库")
+            gr.Markdown("从 `data/reference_data` 构建检索知识库，Agent 会把这些文章作为谣言检测证据。")
 
-            build_btn = gr.Button("Build / Rebuild Reference RAG Database", variant="primary", size="md")
+            build_btn = gr.Button("构建 / 重建 RAG 知识库", variant="primary", size="md")
 
-            gr.Markdown("## Database Status")
+            gr.Markdown("## 知识库状态")
             database_summary = gr.Textbox(
                 value=format_database_summary(),
                 interactive=False,
@@ -57,17 +57,17 @@ def create_gradio_ui():
             )
             
             with gr.Row():
-                refresh_btn = gr.Button("Refresh", size="md")
-                clear_btn = gr.Button("Clear All", variant="stop", size="md")
+                refresh_btn = gr.Button("刷新", size="md")
+                clear_btn = gr.Button("清空", variant="stop", size="md")
             
             build_btn.click(build_database_handler, None, database_summary, show_progress="corner")
             refresh_btn.click(format_database_summary, None, database_summary)
             clear_btn.click(clear_handler, None, database_summary)
         
-        with gr.Tab("Chat"):
+        with gr.Tab("检测"):
             chatbot = gr.Chatbot(
                 height=720, 
-                placeholder="<strong>Enter a claim or upload an image for rumor detection.</strong><br><em>Images are parsed with OCR and BLIP before retrieval.</em>",
+                placeholder="<strong>输入文本或上传图片进行谣言检测。</strong><br><em>图片会先经过 OCR 和 BLIP 解析，再进入检索判断。</em>",
                 show_label=False,
                 avatar_images=(None, os.path.join(ASSETS_DIR, "chatbot_avatar.png")),
                 layout="bubble"
@@ -77,7 +77,7 @@ def create_gradio_ui():
             chat_input = gr.MultimodalTextbox(
                 file_types=["image"],
                 file_count="single",
-                placeholder="Type a claim or upload an image...",
+                placeholder="输入需要核验的内容，或上传一张图片...",
                 show_label=False,
                 sources=["upload"],
             )

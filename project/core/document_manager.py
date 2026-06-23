@@ -12,32 +12,36 @@ class DocumentManager:
 
     def build_rumor_database(self, progress_callback=None):
         if progress_callback:
-            progress_callback(0.1, desc="Resetting vector store")
+            progress_callback(0.1, desc="正在重置向量库")
         self.clear_all()
 
         if progress_callback:
-            progress_callback(0.35, desc="Preparing reference article knowledge base")
+            progress_callback(0.35, desc="正在准备参考知识库")
         result = build_rumor_database()
 
         md_path = Path(result["markdown_path"])
         if progress_callback:
-            progress_callback(0.55, desc="Chunking reference articles")
+            progress_callback(0.55, desc="正在切分参考文章")
         parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(
             md_path,
             source_name=Path(result["csv_path"]).name,
         )
 
         if not child_chunks:
-            raise ValueError("No child chunks were created from the reference database.")
+            raise ValueError("参考知识库没有生成可索引的子文本块。")
 
         if progress_callback:
-            progress_callback(0.8, desc="Indexing reference articles in Qdrant")
+            progress_callback(0.8, desc="正在写入 Qdrant 向量库")
         self.rag_system.parent_store.save_many(parent_chunks)
         collection = self.rag_system.vector_db.get_collection(self.rag_system.collection_name)
-        collection.add_documents(child_chunks)
+        batch_size = max(1, config.INDEX_BATCH_SIZE)
+        for start in range(0, len(child_chunks), batch_size):
+            end = min(start + batch_size, len(child_chunks))
+            print(f"Indexing child chunks {start + 1}-{end} of {len(child_chunks)}")
+            collection.add_documents(child_chunks[start:end])
 
         if progress_callback:
-            progress_callback(1.0, desc="Reference RAG database ready")
+            progress_callback(1.0, desc="参考知识库已就绪")
         return result, len(parent_chunks), len(child_chunks)
     
     def get_markdown_files(self):
@@ -48,8 +52,8 @@ class DocumentManager:
 
     def get_database_summary(self):
         indexed_sources = self.get_markdown_files()
-        indexed_text = "\n".join(f"- {source}" for source in indexed_sources) if indexed_sources else "- Not indexed"
-        return f"{database_summary()}\nIndexed sources:\n{indexed_text}"
+        indexed_text = "\n".join(f"- {source}" for source in indexed_sources) if indexed_sources else "- 尚未索引"
+        return f"{database_summary()}\n已索引来源：\n{indexed_text}"
     
     def clear_all(self):
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
